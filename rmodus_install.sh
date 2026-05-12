@@ -35,7 +35,7 @@ sparse_clone() {
 # --- 3. SYSTÉMOVÝ UPDATE A ZÁKLADNÍ NÁSTROJE ---
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
-    curl gnupg2 lsb-release python3-pip python3-vcstool python3-colcon-common-extensions \
+    curl gnupg2 lsb-release python3-pip \
     git build-essential
 
 # --- 4. INSTALACE ROS 2 JAZZY (bez Nav2 / SLAM z apt; vlastní zdrojáky ve workspace) ---
@@ -43,9 +43,12 @@ sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 sudo apt update
+# vcstool/colcon: z packages.ros.org (na čistém Noble často chybí jen v ubuntu-ports).
 sudo apt install -y \
     ros-$ROS_DISTRO-ros-base \
-    ros-$ROS_DISTRO-dev-tools
+    ros-$ROS_DISTRO-dev-tools \
+    python3-vcstool \
+    python3-colcon-common-extensions
 
 # Prostředí ROS (nutné pro rosdep a colcon)
 # shellcheck source=/dev/null
