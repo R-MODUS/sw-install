@@ -39,6 +39,27 @@ sparse_clone() {
     fi
 }
 
+# Více top-level složek z jednoho repa (např. rmodus_hw + rmodus_interface ve sw-nav-module).
+sparse_clone_flat_multi() {
+    local url=$1
+    local branch=$2
+    local target_dir=$3
+    shift 3
+    local dirs=("$@")
+
+    echo "--> Selektivně stahuji: ${dirs[*]}"
+
+    if [ -d "$target_dir/.git" ]; then
+        echo "    Již existuje $target_dir — přeskočeno (smažte složku pro čisté znovustažení)."
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$target_dir")"
+    rm -rf "$target_dir"
+    git clone --depth 1 -b "$branch" --sparse "$url" "$target_dir"
+    git -C "$target_dir" sparse-checkout set "${dirs[@]}"
+}
+
 # --- 3. SYSTÉMOVÝ UPDATE A ZÁKLADNÍ NÁSTROJE ---
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y \
@@ -69,12 +90,13 @@ rosdep update
 mkdir -p "$WS_PATH/src"
 cd "$WS_PATH"
 
-# A: sw-nav-module — pouze balíček rmodus_hw (viz https://github.com/R-MODUS/sw-nav-module/tree/main/rmodus_hw)
-sparse_clone \
+# A: sw-nav-module — rmodus_hw + rmodus_interface (rosdep u rmodus_hw vyžaduje zdroj rmodus_interface)
+sparse_clone_flat_multi \
     "https://github.com/R-MODUS/sw-nav-module.git" \
     "main" \
     "$WS_PATH/src/sw_nav_module" \
-    "rmodus_hw/"
+    rmodus_hw \
+    rmodus_interface
 
 # B: Xsens MTi ROS 2 driver (viz https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client/tree/ros2/src/xsens_mti_ros2_driver)
 sparse_clone \
@@ -105,7 +127,8 @@ if [ -z "$(find "$WS_PATH/src" -name package.xml -print -quit 2>/dev/null)" ]; t
 fi
 
 # --- 7. INSTALACE ZÁVISLOSTÍ A BUILD ---
-rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO"
+# cmake_modules: rf2o ho má v package.xml, ale na ROS 2 Jazzy v rosdistro není rozumný apt záznam (legacy).
+rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" --skip-keys cmake_modules
 
 # Omezení na 2 workery kvůli 4GB RAM na Pi 4
 colcon build --symlink-install --parallel-workers 2
