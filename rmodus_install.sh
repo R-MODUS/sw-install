@@ -10,26 +10,33 @@ echo "===================================================="
 echo "START INSTALACE FRAMEWORKU RMODUS (ROS 2 $ROS_DISTRO)"
 echo "===================================================="
 
-# --- 2. DEFINICE FUNKCE PRO SPARSE CHECKOUT ---
+# --- 2. SPARSE CLONE (git >= 2.25; spolehlivější než init + pull u prázdného repo) ---
 sparse_clone() {
     local url=$1
     local branch=$2
     local target_dir=$3
     local folder_to_keep=$4
+    local folder="${folder_to_keep%/}"
 
-    echo "--> Selektivně stahuji: $folder_to_keep"
+    echo "--> Selektivně stahuji: ${folder}/"
 
-    mkdir -p "$target_dir" && cd "$target_dir"
-
-    if [ ! -d ".git" ]; then
-        git init
-        git remote add origin "$url"
-        git config core.sparseCheckout true
-        echo "$folder_to_keep" >> .git/info/sparse-checkout
+    if [ -d "$target_dir/.git" ]; then
+        echo "    Již existuje $target_dir — přeskočeno (smažte složku pro čisté znovustažení)."
+        return 0
     fi
 
-    git pull --depth 1 origin "$branch"
-    cd "$WS_PATH"
+    mkdir -p "$(dirname "$target_dir")"
+    rm -rf "$target_dir"
+
+    # Top-level složka: clone --sparse. Vnořená cesta: plný shallow clone + no-cone (spolehlivější).
+    if [[ "$folder" == */* ]]; then
+        git clone --depth 1 -b "$branch" "$url" "$target_dir"
+        git -C "$target_dir" sparse-checkout init --no-cone
+        git -C "$target_dir" sparse-checkout set "$folder"
+    else
+        git clone --depth 1 -b "$branch" --sparse "$url" "$target_dir"
+        git -C "$target_dir" sparse-checkout set "$folder"
+    fi
 }
 
 # --- 3. SYSTÉMOVÝ UPDATE A ZÁKLADNÍ NÁSTROJE ---
@@ -91,11 +98,34 @@ if [ -d "$XSPUBLIC_DIR" ]; then
     (cd "$XSPUBLIC_DIR" && make)
 fi
 
+# Žádný package.xml => rosdep/colcon nedávají smysl (často rozbitý clone nebo soukromé repo)
+if [ -z "$(find "$WS_PATH/src" -name package.xml -print -quit 2>/dev/null)" ]; then
+    echo "CHYBA: ve $WS_PATH/src není žádný package.xml — zkontrolujte sparse clone a přístup k GitHubu." >&2
+    exit 1
+fi
+
 # --- 7. INSTALACE ZÁVISLOSTÍ A BUILD ---
 rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO"
 
 # Omezení na 2 workery kvůli 4GB RAM na Pi 4
 colcon build --symlink-install --parallel-workers 2
+
+if [ ! -f "$WS_PATH/install/setup.bash" ]; then
+    echo "CHYBA: colcon nedorazil do konce — chybí $WS_PATH/install/setup.bash. Výše hledejte chybu buildu." >&2
+    exit 1
+fi
+
+# ROS ve výchozím bashi (jinak v novém SSH: ros2: command not found — source byl jen uvnitř tohoto skriptu)
+if [ -f "$HOME/.bashrc" ] && [ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]; then
+    if ! grep -qF "/opt/ros/${ROS_DISTRO}/setup.bash" "$HOME/.bashrc" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Přidáno rmodus_install.sh — ROS 2 ${ROS_DISTRO}"
+            echo "source /opt/ros/${ROS_DISTRO}/setup.bash"
+            echo "test -f \"${WS_PATH}/install/setup.bash\" && source \"${WS_PATH}/install/setup.bash\""
+        } >> "$HOME/.bashrc"
+    fi
+fi
 
 # --- 8. HARDWARE A SYSTÉMOVÉ SLUŽBY ---
 sudo usermod -aG dialout "$USER"
@@ -116,5 +146,8 @@ if [ -f "$DEPLOY_PATH/rmodus.service" ]; then
 fi
 
 echo "===================================================="
-echo "INSTALACE DOKONČENA. Restartujte Pi."
+echo "INSTALACE DOKONČENA."
+echo "  • V tomto SSH okně:  source ~/.bashrc   (nebo se znovu přihlaste)"
+echo "  • Ověření:          ros2 doctor"
+echo "  • Restart Pi (doporučeno: dialout + systemd)."
 echo "===================================================="
