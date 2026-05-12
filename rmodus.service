@@ -1,0 +1,14 @@
+[Unit]
+Description=Rmodus Launch
+After=network.target
+
+[Service]
+Type=simple
+User=admin
+# Spouštíme univerzální entrypoint skript (uživatel admin na Raspberry Pi)
+ExecStart=/usr/bin/bash /home/admin/rmodus_entrypoint.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
