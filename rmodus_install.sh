@@ -43,12 +43,10 @@ sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 sudo apt update
-# vcstool/colcon: z packages.ros.org (na čistém Noble často chybí jen v ubuntu-ports).
+# ros-dev-tools = oficiální meta-balík (colcon, vcstool, rosdep, …). Není to ros-jazzy-dev-tools.
 sudo apt install -y \
     ros-$ROS_DISTRO-ros-base \
-    ros-$ROS_DISTRO-dev-tools \
-    python3-vcstool \
-    python3-colcon-common-extensions
+    ros-dev-tools
 
 # Prostředí ROS (nutné pro rosdep a colcon)
 # shellcheck source=/dev/null
