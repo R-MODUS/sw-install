@@ -130,8 +130,9 @@ fi
 # cmake_modules: rf2o ho má v package.xml, ale na ROS 2 Jazzy v rosdistro není rozumný apt záznam (legacy).
 rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" --skip-keys cmake_modules
 
-# Omezení na 2 workery kvůli 4GB RAM na Pi 4
-colcon build --symlink-install --parallel-workers 2
+# Build: na Pi s ~4 GB RAM nebuildovat 2+ balíčky najednou ani příliš paralelně uvnitř CMake (swap / „zamrznutí“).
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-1}"
+colcon build --symlink-install --parallel-workers 1
 
 if [ ! -f "$WS_PATH/install/setup.bash" ]; then
     echo "CHYBA: colcon nedorazil do konce — chybí $WS_PATH/install/setup.bash. Výše hledejte chybu buildu." >&2
