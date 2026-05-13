@@ -7,7 +7,7 @@
 #    [1] Pomocné funkce (sparse git)
 #    [2] Základní apt nástroje
 #    [3] ROS 2 repozitář + balíčky + rosdep
-#    [4] Stažení zdrojáků do workspace
+#    [4] Stažení zdrojáků do workspace (sw-nav-module vč. rmodus_web, Xsens, rf2o)
 #    [5] Xsens xspublic (make před colcon)
 #    [6] rosdep + colcon build
 #    [7] Shell: source ROS po přihlášení
@@ -117,7 +117,7 @@ fi
 rosdep update
 
 #-------------------------------------------------------------------------------
-# [4] WORKSPACE — stažení zdrojáků (sw-nav-module, Xsens, rf2o)
+# [4] WORKSPACE — stažení zdrojáků (sw-nav-module + Xsens + rf2o)
 #-------------------------------------------------------------------------------
 echo ""
 echo "┌──────────────────────────────────────────────────────────────────────────┐"
@@ -126,25 +126,29 @@ echo "└───────────────────────�
 mkdir -p "$WS_PATH/src"
 cd "$WS_PATH"
 
-echo "  (4a) R-MODUS/sw-nav-module → rmodus_hw, rmodus_interface"
+echo "  (4a) R-MODUS/sw-nav-module → rmodus_hw, rmodus_web, rmodus_interface"
 sparse_clone_flat_multi \
     "https://github.com/R-MODUS/sw-nav-module.git" \
     "main" \
     "$WS_PATH/src/sw_nav_module" \
     rmodus_hw \
+    rmodus_web \
     rmodus_interface
 
 SNAV_DIR="$WS_PATH/src/sw_nav_module"
-if [ -d "$SNAV_DIR/.git" ] && [ ! -f "$SNAV_DIR/rmodus_interface/package.xml" ]; then
-    echo "  (4a-fix) Doplňuji sparse-checkout o rmodus_interface"
-    git -C "$SNAV_DIR" sparse-checkout set rmodus_hw rmodus_interface
+if [ -d "$SNAV_DIR/.git" ] && {
+    [ ! -f "$SNAV_DIR/rmodus_interface/package.xml" ] ||
+        [ ! -f "$SNAV_DIR/rmodus_web/package.xml" ];
+}; then
+    echo "  (4a-fix) Doplňuji sparse-checkout: rmodus_hw rmodus_web rmodus_interface"
+    git -C "$SNAV_DIR" sparse-checkout set rmodus_hw rmodus_web rmodus_interface
 fi
 
 echo "  (4b) Xsens MTi ROS2 driver (větev ros2)"
 sparse_clone \
     "https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git" \
     "ros2" \
-    "$WS_PATH/src/rmodus_drivers/xsens_mti_driver" \
+    "$WS_PATH/src/xsens_mti_driver" \
     "src/xsens_mti_ros2_driver/"
 
 echo "  (4c) rf2o_laser_odometry (větev ros2)"
@@ -161,7 +165,7 @@ echo ""
 echo "┌──────────────────────────────────────────────────────────────────────────┐"
 echo "│ [5] Xsens xspublic — make v lib/xspublic                                  │"
 echo "└──────────────────────────────────────────────────────────────────────────┘"
-XSPUBLIC_DIR="$WS_PATH/src/rmodus_drivers/xsens_mti_driver/src/xsens_mti_ros2_driver/lib/xspublic"
+XSPUBLIC_DIR="$WS_PATH/src/xsens_mti_driver/src/xsens_mti_ros2_driver/lib/xspublic"
 if [ -d "$XSPUBLIC_DIR" ]; then
     (cd "$XSPUBLIC_DIR" && make)
 else
@@ -243,8 +247,8 @@ echo ""
 echo "┌──────────────────────────────────────────────────────────────────────────┐"
 echo "│ [9] udev pravidla (Xsens) + systemd unit rmodus.service                 │"
 echo "└──────────────────────────────────────────────────────────────────────────┘"
-if [ -d "$WS_PATH/src/rmodus_drivers/xsens_mti_driver/src/xsens_mti_ros2_driver/resources" ]; then
-    sudo cp "$WS_PATH/src/rmodus_drivers/xsens_mti_driver/src/xsens_mti_ros2_driver/resources/99-xsens-mti.rules" /etc/udev/rules.d/
+if [ -d "$WS_PATH/src/xsens_mti_driver/src/xsens_mti_ros2_driver/resources" ]; then
+    sudo cp "$WS_PATH/src/xsens_mti_driver/src/xsens_mti_ros2_driver/resources/99-xsens-mti.rules" /etc/udev/rules.d/
     sudo udevadm control --reload-rules && sudo udevadm trigger
     echo "         Xsens udev pravidla zkopírována."
 else

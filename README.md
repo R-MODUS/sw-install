@@ -17,3 +17,10 @@ sudo fallocate -l 4G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
+
+source /opt/ros/jazzy/setup.bash
+source ~/rmodus_ws/install/setup.bash
+
+rm -rf ~/rmodus_ws
+cd ~/rmodus_setup && git pull && bash rmodus_install.sh
+cd ..
