@@ -98,6 +98,13 @@ sparse_clone_flat_multi \
     rmodus_hw \
     rmodus_interface
 
+# Starší klon sw_nav_module měl jen rmodus_hw — bez ručního rm doplníme rmodus_interface
+SNAV_DIR="$WS_PATH/src/sw_nav_module"
+if [ -d "$SNAV_DIR/.git" ] && [ ! -f "$SNAV_DIR/rmodus_interface/package.xml" ]; then
+    echo "--> Doplňuji sparse-checkout o rmodus_interface v existujícím $SNAV_DIR"
+    git -C "$SNAV_DIR" sparse-checkout set rmodus_hw rmodus_interface
+fi
+
 # B: Xsens MTi ROS 2 driver (viz https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client/tree/ros2/src/xsens_mti_ros2_driver)
 sparse_clone \
     "https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git" \
@@ -130,9 +137,17 @@ fi
 # cmake_modules: rf2o ho má v package.xml, ale na ROS 2 Jazzy v rosdistro není rozumný apt záznam (legacy).
 rosdep install --from-paths src --ignore-src -y --rosdistro "$ROS_DISTRO" --skip-keys cmake_modules
 
-# Build: na Pi s ~4 GB RAM nebuildovat 2+ balíčky najednou ani příliš paralelně uvnitř CMake (swap / „zamrznutí“).
+# Build: Pi / málo RAM — jeden balíček najednou, make/ninja -j1, rf2o zvlášť (linker žere RAM ~60 %).
 export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-1}"
-colcon build --symlink-install --parallel-workers 1
+export MAKEFLAGS="${MAKEFLAGS:--j1}"
+
+colcon build --symlink-install --parallel-workers 1 --packages-skip rf2o_laser_odometry
+
+# rf2o: linker bfd — snížení špičky RAM (viz man ld --no-keep-memory)
+colcon build --symlink-install --parallel-workers 1 --packages-select rf2o_laser_odometry \
+    --cmake-args \
+    '-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-keep-memory' \
+    '-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--no-keep-memory'
 
 if [ ! -f "$WS_PATH/install/setup.bash" ]; then
     echo "CHYBA: colcon nedorazil do konce — chybí $WS_PATH/install/setup.bash. Výše hledejte chybu buildu." >&2

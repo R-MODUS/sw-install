@@ -11,3 +11,9 @@ sudo systemctl stop rmodus
 sudo systemctl restart rmodus
 journalctl -u rmodus -f
 ```
+
+sudo swapoff -a
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
