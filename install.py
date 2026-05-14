@@ -29,7 +29,7 @@ def _force_line_buffered_stdio() -> None:
 _force_line_buffered_stdio()
 
 
-c: dict[str, str] = {
+DEFAULTS: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
     "WS_PATH": str(Path.home() / "rmodus_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus_setup"),
@@ -49,10 +49,30 @@ c: dict[str, str] = {
 
 
 def _banner(title: str) -> None:
-    line = "─" * 74
-    print(f"┌{line}┐")
-    print(f"│ {title:<74}│")
-    print(f"└{line}┘")
+    """ASCII jen kvuli SSH klientum bez UTF-8."""
+    w = 74
+    print("+" + "-" * w + "+")
+    print("| " + (title[: w - 2]).ljust(w - 2) + " |")
+    print("+" + "-" * w + "+")
+
+
+def load_install_conf(path: Path) -> dict[str, str]:
+    cfg = dict(DEFAULTS)
+    if not path.is_file():
+        return cfg
+    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = key_re.match(line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        cfg[key] = val
+    return cfg
 
 
 def _run(
@@ -145,6 +165,10 @@ def _find_package_xml_under(src: Path) -> bool:
 
 
 def main() -> int:
+    repo_dir = Path(__file__).resolve().parent
+    conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
+    c = load_install_conf(conf_path)
+
     ros_distro = c["ROS_DISTRO"]
     ws_path = Path(c["WS_PATH"]).expanduser()
     deploy_path = Path(c["DEPLOY_PATH"]).expanduser()
@@ -157,27 +181,38 @@ def main() -> int:
     home = Path.home()
 
     print("")
-    print("╔" + "═" * 74 + "╗")
-    print(f"║  RMODUS — instalace ROS 2 {ros_distro} + workspace{' ' * 23}║")
-    print("╚" + "═" * 74 + "╝")
-    print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  složky: {c['SW_NAV_SPARSE_DIRS']}")
+    _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
+    print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
+    print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
     print(
         f"  Xsens:  FETCH={c['FETCH_XSENS_DRIVER']}  xspublic={c['BUILD_XSPUBLIC']}  udev={c['INSTALL_XSENS_UDEV']}"
     )
     print(
-        f"  rf2o:   FETCH={c['FETCH_RF2O']}  samostatná fáze buildu={c['BUILD_RF2O_SEPARATE_PHASE']}"
+        f"  rf2o:   FETCH={c['FETCH_RF2O']}  samostatna faze buildu={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
-    print(f"  rosdep: vlastní R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
+    print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
     print(f"  pip rmodus_hw: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
 
     # [2]
     _banner("[2] Apt: aktualizace + curl, git, build-essential, pip")
-    _sudo(["apt", "update"], check=True)
-    _sudo(["apt", "upgrade", "-y"], check=True)
+    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "update"], check=True)
+    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "-y", "upgrade"], check=True)
+    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "-f", "-y", "install"], check=False)
+    _run(["sudo", "dpkg", "--configure", "-a"], check=False)
+    bzip2_rc = _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "install", "-y", "bzip2"], check=False).returncode
+    if bzip2_rc != 0:
+        print(
+            "CHYBA: balicek bzip2 nelze nainstalovat (build-essential ho potrebuje). "
+            "Zkuste: sudo apt-get --fix-broken install -y && sudo apt-get install -y bzip2",
+            file=sys.stderr,
+        )
+        return 1
     _sudo(
         [
-            "apt",
+            "apt-get",
+            "-o",
+            "DPkg::Use-Pty=0",
             "install",
             "-y",
             "curl",
@@ -214,8 +249,11 @@ def main() -> int:
         f"http://packages.ros.org/ros2/ubuntu {ubuntu_codename} main\n"
     )
     _sudo_write("/etc/apt/sources.list.d/ros2.list", deb_line)
-    _sudo(["apt", "update"], check=True)
-    _sudo(["apt", "install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"], check=True)
+    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "update"], check=True)
+    _sudo(
+        ["apt-get", "-o", "DPkg::Use-Pty=0", "install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"],
+        check=True,
+    )
 
     _bash_script(f"source /opt/ros/{ros_distro}/setup.bash && true")
 
@@ -498,14 +536,12 @@ def main() -> int:
 
     # [10]
     print("")
-    print("╔" + "═" * 74 + "╗")
-    print("║  HOTOVÉ                                                                  ║")
-    print("╚" + "═" * 74 + "╝")
-    print("  • Obnovte skupiny:  newgrp dialout   NEBO   odhlášení / restart Pi")
-    print("  • ROS v shellu:     source ~/.bashrc")
-    print("  • Ověření:           ros2 doctor")
-    print(f"  • ROS doména / RMW:  {ros_env}")
-    print("  • Sériové porty:    ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true")
+    _banner("HOTOVE")
+    print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
+    print("  * ROS v shellu:     source ~/.bashrc")
+    print("  * Overeni:          ros2 doctor")
+    print(f"  * ROS domena / RMW: {ros_env}")
+    print("  * Seriove porty:    ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true")
     print("")
     return 0
 
