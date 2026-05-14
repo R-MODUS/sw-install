@@ -95,6 +95,66 @@ def _sudo_write(path: str, content: str) -> None:
     subprocess.run(["sudo", "tee", path], input=content, text=True, check=True)
 
 
+# Jeden apt-get install: libbz2-1.0 + bzip2 spolecne (nesoulad 5.1 vs 5.1build0.1 na ports).
+_BASE_DEB_PKGS: tuple[str, ...] = (
+    "libbz2-1.0",
+    "bzip2",
+    "ca-certificates",
+    "curl",
+    "gnupg2",
+    "lsb-release",
+    "python3-pip",
+    "git",
+    "build-essential",
+)
+
+
+def _apt(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """apt-get pod sudo; DEBIAN_FRONTEND se bez 'sudo env' casto nepreda do apt."""
+    return _run(
+        [
+            "sudo",
+            "env",
+            "DEBIAN_FRONTEND=noninteractive",
+            "NEEDRESTART_MODE=a",
+            "apt-get",
+            "-o",
+            "DPkg::Use-Pty=0",
+            *args,
+        ],
+        check=check,
+    )
+
+
+def _apt_install_base_toolchain() -> None:
+    _apt(["-f", "-y", "install"], check=False)
+    _run(["sudo", "dpkg", "--configure", "-a"], check=False)
+    variants: tuple[list[str], ...] = (
+        ["install", "-y", *_BASE_DEB_PKGS],
+        ["install", "-y", "--allow-downgrades", *_BASE_DEB_PKGS],
+    )
+    last_err: subprocess.CalledProcessError | None = None
+    for i, tail in enumerate(variants):
+        try:
+            _apt(tail, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            if i == 0:
+                print(
+                    "  VAROVANI: apt install selhal (casto nesoulad libbz2/bzip2); "
+                    "opakuji s --allow-downgrades...",
+                    file=sys.stderr,
+                )
+    assert last_err is not None
+    print(
+        "CHYBA: zakladni apt balicky nelze nainstalovat. Diagnostika: "
+        "sudo apt-get update && apt-cache policy libbz2-1.0 bzip2 build-essential",
+        file=sys.stderr,
+    )
+    raise last_err
+
+
 def _read_os_release() -> dict[str, str]:
     out: dict[str, str] = {}
     p = Path("/etc/os-release")
@@ -195,35 +255,10 @@ def main() -> int:
     print("")
 
     # [2]
-    _banner("[2] Apt: aktualizace + curl, git, build-essential, pip")
-    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "update"], check=True)
-    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "-y", "upgrade"], check=True)
-    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "-f", "-y", "install"], check=False)
-    _run(["sudo", "dpkg", "--configure", "-a"], check=False)
-    bzip2_rc = _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "install", "-y", "bzip2"], check=False).returncode
-    if bzip2_rc != 0:
-        print(
-            "CHYBA: balicek bzip2 nelze nainstalovat (build-essential ho potrebuje). "
-            "Zkuste: sudo apt-get --fix-broken install -y && sudo apt-get install -y bzip2",
-            file=sys.stderr,
-        )
-        return 1
-    _sudo(
-        [
-            "apt-get",
-            "-o",
-            "DPkg::Use-Pty=0",
-            "install",
-            "-y",
-            "curl",
-            "gnupg2",
-            "lsb-release",
-            "python3-pip",
-            "git",
-            "build-essential",
-        ],
-        check=True,
-    )
+    _banner("[2] Apt: aktualizace + curl, git, build-essential, pip (+ libbz2/bzip2 v jedne transakci)")
+    _apt(["update"], check=True)
+    _apt(["-y", "upgrade"], check=True)
+    _apt_install_base_toolchain()
 
     # [3]
     print("")
@@ -249,11 +284,8 @@ def main() -> int:
         f"http://packages.ros.org/ros2/ubuntu {ubuntu_codename} main\n"
     )
     _sudo_write("/etc/apt/sources.list.d/ros2.list", deb_line)
-    _sudo(["apt-get", "-o", "DPkg::Use-Pty=0", "update"], check=True)
-    _sudo(
-        ["apt-get", "-o", "DPkg::Use-Pty=0", "install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"],
-        check=True,
-    )
+    _apt(["update"], check=True)
+    _apt(["install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"], check=True)
 
     _bash_script(f"source /opt/ros/{ros_distro}/setup.bash && true")
 
