@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Stáhne sw-install, doinstaluje python3 / git, spustí install.py
+# Stahne sw-install, doinstaluje python3 / git, spusti install.py
 set -euo pipefail
 
-# Tiší needrestart / méně překrývaného výstupu při apt v SSH
+# Tisi needrestart / mene prekryvaneho vystupu pri apt v SSH
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 export PYTHONUNBUFFERED=1
@@ -38,12 +38,12 @@ fi
 INSTALL_PY="${REPO_DIR}/install.py"
 if [[ ! -f "${INSTALL_PY}" ]]; then
   echo "" >&2
-  echo "CHYBA: v ${REPO_DIR} chybí install.py — na GitHubu je pravděpodobně starší main (nebyl push)." >&2
-  echo "  Po pushnutí změn spusťte na Pi:  cd ${REPO_DIR} && git fetch origin && git reset --hard origin/main" >&2
-  echo "  Obsah adresáře:" >&2
+  echo "CHYBA: v ${REPO_DIR} chybi install.py - na GitHubu je pravdepodobne starsi main (nebyl push)." >&2
+  echo "  Po pushnuti zmen spustte na Pi:  cd ${REPO_DIR} && git fetch origin && git reset --hard origin/main" >&2
+  echo "  Obsah adresare:" >&2
   ls -la "${REPO_DIR}" >&2
   exit 1
 fi
 chmod +x "${INSTALL_PY}" 2>/dev/null || true
-# -u = nebufferovaný výstup (print z install.py hned viditelný v SSH)
+# -u = nebufferovany vystup (print z install.py hned viditelny v SSH)
 exec python3 -u "${INSTALL_PY}" "$@"

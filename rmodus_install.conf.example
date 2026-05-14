@@ -1,0 +1,22 @@
+# Kopie do rmodus_install.conf a upravte. Alternativa: export RMODUS_INSTALL_CONF=/cesta/k/souboru
+#
+# SWAP_* (pred apt/build) - vychozi hodnoty jsou i v install.py DEFAULTS
+# SWAP_ENABLE=1
+# SWAP_SIZE_MB=2048
+# SWAP_PATH=/swapfile
+#
+# ROS_DISTRO=jazzy
+# WS_PATH=~/rmodus_ws
+# DEPLOY_PATH=~/rmodus_setup
+# FETCH_SW_NAV_MODULE=1
+# SW_NAV_SPARSE_DIRS=rmodus_hw rmodus_web rmodus_interface
+# SW_NAV_BRANCH=main
+# FETCH_XSENS_DRIVER=0
+# BUILD_XSPUBLIC=1
+# INSTALL_XSENS_UDEV=1
+# FETCH_RF2O=0
+# BUILD_RF2O_SEPARATE_PHASE=1
+# ENABLE_SYSTEMD_RMODUS=1
+# INSTALL_RMODUS_ROSDEP_RULES=1
+# RMODUS_ROSDEP_YAML_URL=
+# INSTALL_RMODUS_HW_PIP=1

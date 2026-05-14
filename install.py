@@ -340,10 +340,11 @@ def _ensure_swap(c: dict) -> None:
     if size_mb < 64:
         print("CHYBA: SWAP_SIZE_MB prilis male (minimum 64)", file=sys.stderr)
         raise SystemExit(1) from None
-    sp = str(Path(c.get("SWAP_PATH", "/swapfile")).expanduser())
-    if not Path(sp).is_absolute():
+    p0 = Path(c.get("SWAP_PATH", "/swapfile")).expanduser()
+    if not p0.is_absolute():
         print("CHYBA: SWAP_PATH musi byt absolutni cesta", file=sys.stderr)
         raise SystemExit(1) from None
+    sp = str(p0.resolve())
 
     want = size_mb * 1024 * 1024
     _banner("[1] swap: soubor, swapon, zapis do /etc/fstab (dle conf)")
@@ -462,12 +463,12 @@ def main() -> int:
 
     # [4]
     print("")
-    _banner(f"[4] Workspace {ws_path} — klonování repozitářů")
+    _banner(f"[4] Workspace {ws_path} - klonovani repozitaru")
     ws_path.mkdir(parents=True, exist_ok=True)
     (ws_path / "src").mkdir(parents=True, exist_ok=True)
 
     if _as_bool(c["FETCH_SW_NAV_MODULE"]):
-        print(f"  (4a) R-MODUS/sw-nav-module (větev {c['SW_NAV_BRANCH']}) → {c['SW_NAV_SPARSE_DIRS']}")
+        print(f"  (4a) R-MODUS/sw-nav-module (vetev {c['SW_NAV_BRANCH']}) -> {c['SW_NAV_SPARSE_DIRS']}")
         _sparse_clone_flat_multi(
             "https://github.com/R-MODUS/sw-nav-module.git",
             c["SW_NAV_BRANCH"],
@@ -487,7 +488,7 @@ def main() -> int:
             "src/xsens_mti_ros2_driver/",
         )
     else:
-        print("  (4b) Xsens driver — přeskočeno (FETCH_XSENS_DRIVER=0)")
+        print("  (4b) Xsens driver - preskoceno (FETCH_XSENS_DRIVER=0)")
 
     if _as_bool(c["FETCH_RF2O"]):
         print("  (4c) rf2o_laser_odometry (vetev ros2)")
@@ -583,7 +584,7 @@ def main() -> int:
     rhw_pkg = snav_dir / "rmodus_hw" / "package.xml"
     rhw_req = snav_dir / "rmodus_hw" / "requirements-pip.txt"
     if _as_bool(c["INSTALL_RMODUS_HW_PIP"]) and rhw_pkg.is_file():
-        print("  (6a2) pip install — rmodus_hw (PEP 668: --user --break-system-packages)")
+        print("  (6a2) pip install - rmodus_hw (PEP 668: --user --break-system-packages)")
         pip_base = [
             sys.executable,
             "-m",
@@ -701,7 +702,8 @@ def main() -> int:
         else:
             print("         Soubor 99-xsens-mti.rules nenalezen - preskoceno.")
     elif not _as_bool(c["INSTALL_XSENS_UDEV"]):
-        print("         Preskoceno (INSTALL_XSENS_UDEV=0).")    else:
+        print("         Preskoceno (INSTALL_XSENS_UDEV=0).")
+    else:
         print("         Adresar resources/ nenalezen - preskoceno (chybi Xsens driver ve src?).")
 
     # [9b]
@@ -729,7 +731,7 @@ def main() -> int:
     elif not _as_bool(c["ENABLE_SYSTEMD_RMODUS"]):
         print("         Preskoceno (ENABLE_SYSTEMD_RMODUS=0).")
     else:
-        print(f"         Chybí {svc_src} nebo {ep_tpl} v {deploy_path}.")
+        print(f"         Chybi {svc_src} nebo {ep_tpl} v {deploy_path}.")
 
     # [10]
     print("")
@@ -747,5 +749,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except subprocess.CalledProcessError as e:
-        print(f"CHYBA: příkaz selhal (exit {e.returncode}): {e.cmd}", file=sys.stderr)
+        print(f"CHYBA: prikaz selhal (exit {e.returncode}): {e.cmd}", file=sys.stderr)
         raise SystemExit(e.returncode)
