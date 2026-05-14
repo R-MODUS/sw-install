@@ -34,12 +34,12 @@ DEFAULTS: dict[str, str] = {
     "WS_PATH": str(Path.home() / "rmodus_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus_setup"),
     "FETCH_SW_NAV_MODULE": "1",
-    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface",
+    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_autonomy",
     "SW_NAV_BRANCH": "main",
-    "FETCH_XSENS_DRIVER": "1",
+    "FETCH_XSENS_DRIVER": "0",
     "BUILD_XSPUBLIC": "1",
     "INSTALL_XSENS_UDEV": "1",
-    "FETCH_RF2O": "1",
+    "FETCH_RF2O": "0",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
     "INSTALL_RMODUS_ROSDEP_RULES": "1",
@@ -54,25 +54,6 @@ def _banner(title: str) -> None:
     print("+" + "-" * w + "+")
     print("| " + (title[: w - 2]).ljust(w - 2) + " |")
     print("+" + "-" * w + "+")
-
-
-def load_install_conf(path: Path) -> dict[str, str]:
-    cfg = dict(DEFAULTS)
-    if not path.is_file():
-        return cfg
-    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = key_re.match(line)
-        if not m:
-            continue
-        key, val = m.group(1), m.group(2).strip()
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        cfg[key] = val
-    return cfg
 
 
 def _run(
@@ -287,9 +268,7 @@ def _find_package_xml_under(src: Path) -> bool:
 
 
 def main() -> int:
-    repo_dir = Path(__file__).resolve().parent
-    conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
-    c = load_install_conf(conf_path)
+    c = dict(DEFAULTS)
 
     ros_distro = c["ROS_DISTRO"]
     ws_path = Path(c["WS_PATH"]).expanduser()
@@ -304,7 +283,6 @@ def main() -> int:
 
     print("")
     _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
-    print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
     print(
         f"  Xsens:  FETCH={c['FETCH_XSENS_DRIVER']}  xspublic={c['BUILD_XSPUBLIC']}  udev={c['INSTALL_XSENS_UDEV']}"
