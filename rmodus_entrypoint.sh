@@ -14,3 +14,4 @@ source "__WS_PATH__/install/setup.bash"
 
 # Upravte nazev launch souboru, pokud se lisi od rmodus_main.launch.py
 #ros2 launch rmodus_hw rmodus_main.launch.py
+

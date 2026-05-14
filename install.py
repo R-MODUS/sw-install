@@ -289,6 +289,27 @@ def _find_package_xml_under(src: Path) -> bool:
     return any(src.rglob("package.xml"))
 
 
+def _rmodus_pip_requirement_files(ws_src: Path) -> list[Path]:
+    """requirements-pip.txt u kazdeho ROS baliku rmodus_* (slozka s package.xml), bez duplicit."""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    if not ws_src.is_dir():
+        return out
+    for pkg_xml in ws_src.rglob("package.xml"):
+        pkg_dir = pkg_xml.parent
+        if not pkg_dir.name.startswith("rmodus_"):
+            continue
+        req = pkg_dir / "requirements-pip.txt"
+        if not req.is_file():
+            continue
+        key = req.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(req)
+    return sorted(out, key=lambda p: p.as_posix().lower())
+
+
 def _swapfile_exists(sp: str) -> bool:
     return subprocess.run(["sudo", "test", "-f", sp], capture_output=True).returncode == 0
 
@@ -416,7 +437,7 @@ def main() -> int:
         f"  rf2o:   FETCH={c['FETCH_RF2O']}  samostatna faze buildu={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
-    print(f"  pip rmodus_hw: {c['INSTALL_RMODUS_HW_PIP']}")
+    print(f"  pip rmodus_*: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
 
     _ensure_swap(c)
@@ -581,10 +602,8 @@ def main() -> int:
         check=True,
     )
 
-    rhw_pkg = snav_dir / "rmodus_hw" / "package.xml"
-    rhw_req = snav_dir / "rmodus_hw" / "requirements-pip.txt"
-    if _as_bool(c["INSTALL_RMODUS_HW_PIP"]) and rhw_pkg.is_file():
-        print("  (6a2) pip install - rmodus_hw (PEP 668: --user --break-system-packages)")
+    if _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
+        print("  (6a2) pip install - rmodus_* s requirements-pip.txt (PEP 668: --user --break-system-packages)")
         pip_base = [
             sys.executable,
             "-m",
@@ -594,27 +613,21 @@ def main() -> int:
             "--upgrade",
             "--break-system-packages",
         ]
-        if rhw_req.is_file():
-            _run([*pip_base, "-r", str(rhw_req)], check=True)
-        else:
-            print("         (chybi requirements-pip.txt - zalozni seznam)")
-            _run(
-                [
-                    *pip_base,
-                    "Adafruit-Blinka",
-                    "RPi.GPIO",
-                    "adafruit-circuitpython-mcp230xx",
-                    "adafruit-circuitpython-ads1x15",
-                    "spidev",
-                    "pmw3901",
-                    "adafruit-circuitpython-ssd1306",
-                ],
-                check=True,
+        pip_reqs = _rmodus_pip_requirement_files(ws_path / "src")
+        if not pip_reqs:
+            print(
+                "         VAROVANI: pod src/ zadny rmodus_*/requirements-pip.txt - pip krok nic neinstaluje.",
+                file=sys.stderr,
             )
+        for req in pip_reqs:
+            try:
+                rel = req.relative_to(ws_path)
+            except ValueError:
+                rel = req
+            print(f"         pip -r {rel}")
+            _run([*pip_base, "-r", str(req)], check=True)
     elif not _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
-        print("  (6a2) pip rmodus_hw - preskoceno (INSTALL_RMODUS_HW_PIP=0)")
-    else:
-        print(f"  (6a2) pip rmodus_hw - preskoceno (chybi {rhw_pkg})")
+        print("  (6a2) pip rmodus_* - preskoceno (INSTALL_RMODUS_HW_PIP=0)")
 
     # [6b]/[6c]
     build_env = os.environ.copy()

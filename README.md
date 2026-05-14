@@ -30,7 +30,7 @@ Sdilene promenne ROS 2: **`rmodus_ros.env`** v adresari deploy (`DEPLOY_PATH`, v
 
 V adresari `rmodus_setup` upravte `rmodus_install.conf` (nebo `export RMODUS_INSTALL_CONF=...` pred spustenim). Sablona vsech klicu: **`rmodus_install.conf.example`**.
 
-Klice mimo jine: `SWAP_ENABLE`, `SWAP_SIZE_MB`, `SWAP_PATH` (swap soubor pred apt/colcon), `INSTALL_RMODUS_ROSDEP_RULES`, `RMODUS_ROSDEP_YAML_URL`, `INSTALL_RMODUS_HW_PIP` (pip z `rmodus_hw/requirements-pip.txt` po rosdep).
+Klice mimo jine: `SWAP_ENABLE`, `SWAP_SIZE_MB`, `SWAP_PATH` (swap soubor pred apt/colcon), `INSTALL_RMODUS_ROSDEP_RULES`, `RMODUS_ROSDEP_YAML_URL`, `INSTALL_RMODUS_HW_PIP` (pip z kazdeho `rmodus_*/requirements-pip.txt` pod `src/` po rosdep; nazev klice je historicky).
 
 ```bash
 sudo systemctl stop rmodus
