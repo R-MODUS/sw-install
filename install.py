@@ -160,7 +160,6 @@ def main() -> int:
     print("╔" + "═" * 74 + "╗")
     print(f"║  RMODUS — instalace ROS 2 {ros_distro} + workspace{' ' * 23}║")
     print("╚" + "═" * 74 + "╝")
-    print(f"  Konfig: {conf_path} ({'načteno' if conf_path.is_file() else 'výchozí hodnoty'})")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  složky: {c['SW_NAV_SPARSE_DIRS']}")
     print(
         f"  Xsens:  FETCH={c['FETCH_XSENS_DRIVER']}  xspublic={c['BUILD_XSPUBLIC']}  udev={c['INSTALL_XSENS_UDEV']}"
