@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-R-MODUS — instalace ROS 2 Jazzy + workspace na Raspberry Pi (Ubuntu).
+R-MODUS: instalace ROS 2 Jazzy + workspace na Raspberry Pi (Ubuntu).
 
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def _force_line_buffered_stdio() -> None:
-    """Print jde hned na konzoli i při spuštění z roury nebo bez plného TTY."""
+    """Print jde hned na konzoli i pri spusteni z roury nebo bez plneho TTY."""
     for stream in (sys.stdout, sys.stderr):
         if stream is None or not hasattr(stream, "reconfigure"):
             continue
@@ -45,7 +45,29 @@ DEFAULTS: dict[str, str] = {
     "INSTALL_RMODUS_ROSDEP_RULES": "1",
     "RMODUS_ROSDEP_YAML_URL": "",
     "INSTALL_RMODUS_HW_PIP": "1",
+    "SWAP_ENABLE": "1",
+    "SWAP_SIZE_MB": "4096",
+    "SWAP_PATH": "/swapfile",
 }
+
+
+def load_install_conf(path: Path) -> dict[str, str]:
+    cfg = dict(DEFAULTS)
+    if not path.is_file():
+        return cfg
+    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = key_re.match(line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        cfg[key] = val
+    return cfg
 
 
 def _banner(title: str) -> None:
@@ -219,9 +241,9 @@ def _as_bool(s: str) -> bool:
 
 
 def _sparse_clone_flat_multi(url: str, branch: str, target_dir: Path, dirs: list[str]) -> None:
-    print(f"    [git sparse] {' '.join(dirs)} → {target_dir.name}")
+    print(f"    [git sparse] {' '.join(dirs)} -> {target_dir.name}")
     if (target_dir / ".git").is_dir():
-        print(f"         (složka už existuje — přeskočeno; pro čistý stav smažte {target_dir})")
+        print(f"         (slozka uz existuje - preskoceno; pro cisty stav smazte {target_dir})")
         return
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     if target_dir.exists():
@@ -234,15 +256,15 @@ def _sparse_clone_fix_missing(snav: Path, dirs: list[str]) -> None:
     if not (snav / ".git").is_dir():
         return
     if any(not (snav / d / "package.xml").is_file() for d in dirs):
-        print(f"  (4a-fix) Doplňuji sparse-checkout: {' '.join(dirs)}")
+        print(f"  (4a-fix) doplnuji sparse-checkout: {' '.join(dirs)}")
         _run(["git", "-C", str(snav), "sparse-checkout", "set", *dirs], check=True)
 
 
 def _sparse_clone_nested_folder(url: str, branch: str, target_dir: Path, folder: str) -> None:
     folder = folder.rstrip("/")
-    print(f"    [git sparse] {folder}/ → {target_dir.name}")
+    print(f"    [git sparse] {folder}/ -> {target_dir.name}")
     if (target_dir / ".git").is_dir():
-        print(f"         (složka už existuje — přeskočeno; pro čistý stav smažte {target_dir})")
+        print(f"         (slozka uz existuje - preskoceno; pro cisty stav smazte {target_dir})")
         return
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     if target_dir.exists():
@@ -267,8 +289,108 @@ def _find_package_xml_under(src: Path) -> bool:
     return any(src.rglob("package.xml"))
 
 
+def _swapfile_exists(sp: str) -> bool:
+    return subprocess.run(["sudo", "test", "-f", sp], capture_output=True).returncode == 0
+
+
+def _swapfile_size_bytes(sp: str) -> int | None:
+    r = subprocess.run(["sudo", "stat", "-c%s", sp], capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _swap_active(sp: str) -> bool:
+    r = subprocess.run(["swapon", "--show"], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout:
+        return False
+    for line in r.stdout.splitlines()[1:]:
+        parts = line.split()
+        if parts and parts[0] == sp:
+            return True
+    return False
+
+
+def _fstab_has_swap(sp: str) -> bool:
+    r = subprocess.run(["sudo", "cat", "/etc/fstab"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        fields = s.split()
+        if len(fields) >= 2 and fields[0] == sp and fields[1] == "none" and "swap" in fields:
+            return True
+    return False
+
+
+def _ensure_swap(c: dict) -> None:
+    if not _as_bool(c.get("SWAP_ENABLE", "0")):
+        return
+    raw_mb = str(c.get("SWAP_SIZE_MB", "2048")).strip()
+    try:
+        size_mb = int(raw_mb)
+    except ValueError:
+        print("CHYBA: SWAP_SIZE_MB musi byt cele cislo", file=sys.stderr)
+        raise SystemExit(1) from None
+    if size_mb < 64:
+        print("CHYBA: SWAP_SIZE_MB prilis male (minimum 64)", file=sys.stderr)
+        raise SystemExit(1) from None
+    sp = str(Path(c.get("SWAP_PATH", "/swapfile")).expanduser())
+    if not Path(sp).is_absolute():
+        print("CHYBA: SWAP_PATH musi byt absolutni cesta", file=sys.stderr)
+        raise SystemExit(1) from None
+
+    want = size_mb * 1024 * 1024
+    _banner("[1] swap: soubor, swapon, zapis do /etc/fstab (dle conf)")
+    print(f"  swap: SWAP_ENABLE=1  path={sp}  size_MiB={size_mb}")
+
+    if _swap_active(sp):
+        print(f"         swap uz aktivni ({sp}) - preskoceno")
+        return
+
+    if _swapfile_exists(sp):
+        got = _swapfile_size_bytes(sp)
+        if got is not None and abs(got - want) > 4 * 1024 * 1024:
+            print(
+                f"         VAROVANI: {sp} existuje, velikost se lisi od conf ({got} B vs {want} B). "
+                "Preskoceno - smazte soubor rucne nebo upravte SWAP_SIZE_MB.",
+                file=sys.stderr,
+            )
+            return
+
+    if not _swapfile_exists(sp):
+        try:
+            _sudo(["fallocate", "-l", f"{size_mb}M", sp], check=True)
+        except subprocess.CalledProcessError:
+            _sudo(
+                ["dd", "if=/dev/zero", f"of={sp}", "bs=1M", f"count={str(size_mb)}", "status=none"],
+                check=True,
+            )
+
+    _sudo(["chown", "root:root", sp], check=True)
+    _sudo(["chmod", "600", sp], check=True)
+    _sudo(["mkswap", "-f", sp], check=True)
+    _sudo(["swapon", sp], check=True)
+
+    if not _fstab_has_swap(sp):
+        line = f"{sp} none swap sw 0 0\n"
+        subprocess.run(["sudo", "tee", "-a", "/etc/fstab"], input=line, text=True, check=True)
+        print("         /etc/fstab: pridan radek swap")
+    else:
+        print("         /etc/fstab: radek swap uz existuje")
+
+    print("         swap: hotovo (overeni: swapon --show)")
+
+
 def main() -> int:
-    c = dict(DEFAULTS)
+    repo_dir = Path(__file__).resolve().parent
+    conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
+    c = load_install_conf(conf_path)
 
     ros_distro = c["ROS_DISTRO"]
     ws_path = Path(c["WS_PATH"]).expanduser()
@@ -283,6 +405,8 @@ def main() -> int:
 
     print("")
     _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
+    print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
+    print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
     print(
         f"  Xsens:  FETCH={c['FETCH_XSENS_DRIVER']}  xspublic={c['BUILD_XSPUBLIC']}  udev={c['INSTALL_XSENS_UDEV']}"
@@ -294,6 +418,8 @@ def main() -> int:
     print(f"  pip rmodus_hw: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
 
+    _ensure_swap(c)
+
     # [2]
     _banner("[2] Apt: aktualizace + curl, git, build-essential, pip (+ libbz2/bzip2 v jedne transakci)")
     _apt(["update"], check=True)
@@ -302,7 +428,7 @@ def main() -> int:
 
     # [3]
     print("")
-    _banner(f"[3] ROS 2 {ros_distro}: repozitář packages.ros.org, ros-base, ros-dev-tools")
+    _banner(f"[3] ROS 2 {ros_distro}: repozitar packages.ros.org, ros-base, ros-dev-tools")
     os_release = _read_os_release()
     ubuntu_codename = os_release.get("VERSION_CODENAME", "")
     if not ubuntu_codename:
@@ -350,10 +476,10 @@ def main() -> int:
         )
         _sparse_clone_fix_missing(snav_dir, sw_nav_dirs)
     else:
-        print("  (4a) sw-nav-module — přeskočeno (FETCH_SW_NAV_MODULE=0)")
+        print("  (4a) sw-nav-module - preskoceno (FETCH_SW_NAV_MODULE=0)")
 
     if _as_bool(c["FETCH_XSENS_DRIVER"]):
-        print("  (4b) Xsens MTi ROS2 driver (větev ros2)")
+        print("  (4b) Xsens MTi ROS2 driver (vetev ros2)")
         _sparse_clone_nested_folder(
             "https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git",
             "ros2",
@@ -364,7 +490,7 @@ def main() -> int:
         print("  (4b) Xsens driver — přeskočeno (FETCH_XSENS_DRIVER=0)")
 
     if _as_bool(c["FETCH_RF2O"]):
-        print("  (4c) rf2o_laser_odometry (větev ros2)")
+        print("  (4c) rf2o_laser_odometry (vetev ros2)")
         if not (rf2o_dir / ".git").is_dir():
             if rf2o_dir.exists():
                 shutil.rmtree(rf2o_dir)
@@ -383,34 +509,34 @@ def main() -> int:
                 check=True,
             )
     else:
-        print("  (4c) rf2o — přeskočeno (FETCH_RF2O=0)")
+        print("  (4c) rf2o - preskoceno (FETCH_RF2O=0)")
 
     # [5]
     print("")
-    _banner("[5] Xsens xspublic — make v lib/xspublic")
+    _banner("[5] Xsens xspublic - make v lib/xspublic")
     xspublic_dir = xsens_ws_dir / "src" / "xsens_mti_ros2_driver" / "lib" / "xspublic"
     if _as_bool(c["FETCH_XSENS_DRIVER"]) and _as_bool(c["BUILD_XSPUBLIC"]):
         if xspublic_dir.is_dir():
             _run(["make"], cwd=xspublic_dir, check=True)
         else:
-            print("         (xspublic nenalezen — přeskočeno)")
+            print("         (xspublic nenalezen - preskoceno)")
     else:
         print(
-            f"         (přeskočeno: FETCH_XSENS_DRIVER={c['FETCH_XSENS_DRIVER']}, BUILD_XSPUBLIC={c['BUILD_XSPUBLIC']})"
+            f"         (preskoceno: FETCH_XSENS_DRIVER={c['FETCH_XSENS_DRIVER']}, BUILD_XSPUBLIC={c['BUILD_XSPUBLIC']})"
         )
 
     if not _find_package_xml_under(ws_path / "src"):
         print(
-            f"CHYBA: v {ws_path / 'src'} není žádný package.xml — zapněte alespoň jeden zdroj v conf.",
+            f"CHYBA: v {ws_path / 'src'} neni zadny package.xml - zapnete alespon jeden zdroj v conf.",
             file=sys.stderr,
         )
         return 1
 
     # [6a]
     print("")
-    _banner("[6a] rosdep — závislosti z package.xml ve src/")
+    _banner("[6a] rosdep - zavislosti z package.xml ve src/")
     if _as_bool(c["INSTALL_RMODUS_ROSDEP_RULES"]):
-        print("  (6a0) R-MODUS/sw-nav-module — rosdep/rmodus_custom.yaml → /etc/ros/rosdep/")
+        print("  (6a0) R-MODUS/sw-nav-module - rosdep/rmodus_custom.yaml -> /etc/ros/rosdep/")
         yaml_url = (c.get("RMODUS_ROSDEP_YAML_URL") or "").strip()
         if not yaml_url:
             yaml_url = (
@@ -429,14 +555,14 @@ def main() -> int:
             print(f"         Zdroj: {yaml_url}")
         except subprocess.CalledProcessError:
             print(
-                f"         VAROVÁNÍ: nelze stáhnout {yaml_url} — pokračuji bez vlastních rosdep klíčů R-MODUS",
+                f"         VAROVANI: nelze stahnout {yaml_url} - pokracuji bez vlastnich rosdep klicu R-MODUS",
                 file=sys.stderr,
             )
             _sudo(["rm", "-f", str(tmp)], check=False)
     else:
-        print("  (6a0) vlastní rosdep pravidla R-MODUS — přeskočeno (INSTALL_RMODUS_ROSDEP_RULES=0)")
+        print("  (6a0) vlastni rosdep pravidla R-MODUS - preskoceno (INSTALL_RMODUS_ROSDEP_RULES=0)")
 
-    print("  (6a1) rosdep install — systémové (a pip) závislosti z package.xml")
+    print("  (6a1) rosdep install - systemove (a pip) zavislosti z package.xml")
     _run(
         [
             "rosdep",
@@ -470,7 +596,7 @@ def main() -> int:
         if rhw_req.is_file():
             _run([*pip_base, "-r", str(rhw_req)], check=True)
         else:
-            print("         (chybí requirements-pip.txt — záložní seznam)")
+            print("         (chybi requirements-pip.txt - zalozni seznam)")
             _run(
                 [
                     *pip_base,
@@ -485,9 +611,9 @@ def main() -> int:
                 check=True,
             )
     elif not _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
-        print("  (6a2) pip rmodus_hw — přeskočeno (INSTALL_RMODUS_HW_PIP=0)")
+        print("  (6a2) pip rmodus_hw - preskoceno (INSTALL_RMODUS_HW_PIP=0)")
     else:
-        print(f"  (6a2) pip rmodus_hw — přeskočeno (chybí {rhw_pkg})")
+        print(f"  (6a2) pip rmodus_hw - preskoceno (chybi {rhw_pkg})")
 
     # [6b]/[6c]
     build_env = os.environ.copy()
@@ -496,7 +622,7 @@ def main() -> int:
 
     if _as_bool(c["FETCH_RF2O"]) and _as_bool(c["BUILD_RF2O_SEPARATE_PHASE"]):
         print("")
-        _banner("[6b] colcon build — balíčky ve workspace kromě rf2o_laser_odometry")
+        _banner("[6b] colcon build - balicky ve workspace krome rf2o_laser_odometry")
         _bash_script(
             f"source /opt/ros/{ros_distro}/setup.bash && "
             "colcon build --symlink-install --parallel-workers 1 --packages-skip rf2o_laser_odometry",
@@ -504,7 +630,7 @@ def main() -> int:
             env=build_env,
         )
         print("")
-        _banner("[6c] colcon build — pouze rf2o_laser_odometry (linker, šetření RAM)")
+        _banner("[6c] colcon build - pouze rf2o_laser_odometry (linker, setreni RAM)")
         _bash_script(
             f"source /opt/ros/{ros_distro}/setup.bash && "
             "colcon build --symlink-install --parallel-workers 1 --packages-select rf2o_laser_odometry "
@@ -516,7 +642,7 @@ def main() -> int:
         )
     else:
         print("")
-        _banner("[6b] colcon build — celý workspace (jedna fáze)")
+        _banner("[6b] colcon build - cely workspace (jedna faze)")
         _bash_script(
             f"source /opt/ros/{ros_distro}/setup.bash && colcon build --symlink-install --parallel-workers 1",
             cwd=ws_path,
@@ -524,12 +650,12 @@ def main() -> int:
         )
 
     if not (ws_path / "install" / "setup.bash").is_file():
-        print(f"CHYBA: chybí {ws_path / 'install' / 'setup.bash'} — build nedoběhl.", file=sys.stderr)
+        print(f"CHYBA: chybi {ws_path / 'install' / 'setup.bash'} - build nedobehl.", file=sys.stderr)
         return 1
 
     # [7]
     print("")
-    _banner("[7] ~/.bashrc — source /opt/ros a install/setup.bash")
+    _banner("[7] ~/.bashrc - source /opt/ros a install/setup.bash")
     bashrc = home / ".bashrc"
     marker = f"/opt/ros/{ros_distro}/setup.bash"
     ros_env = deploy_path / "rmodus_ros.env"
@@ -537,33 +663,33 @@ def main() -> int:
         text = bashrc.read_text(encoding="utf-8", errors="replace")
         if marker not in text:
             block = (
-                "\n# --- RMODUS (přidáno install.py) ---\n"
+                "\n# --- RMODUS (pridano install.py) ---\n"
                 f'test -f "{ros_env}" && {{ set -a; source "{ros_env}"; set +a; }}\n'
                 f"source /opt/ros/{ros_distro}/setup.bash\n"
                 f'test -f "{ws_path}/install/setup.bash" && source "{ws_path}/install/setup.bash"\n'
             )
             with bashrc.open("a", encoding="utf-8") as f:
                 f.write(block)
-            print("         Řádky přidány do ~/.bashrc")
+            print("         radky pridany do ~/.bashrc")
         else:
-            print("         ~/.bashrc už obsahuje source pro ROS — beze změny")
+            print("         ~/.bashrc uz obsahuje source pro ROS - beze zmeny")
 
     # [8]
     print("")
-    _banner("[8] Práva k /dev/ttyUSB*, /dev/ttyACM* — skupiny dialout (a plugdev)")
+    _banner("[8] Prava k /dev/ttyUSB*, /dev/ttyACM* - skupiny dialout (a plugdev)")
     _sudo(["usermod", "-aG", "dialout", user], check=True)
     plugdev = subprocess.run(["getent", "group", "plugdev"], capture_output=True).returncode == 0
     if plugdev:
         _sudo(["usermod", "-aG", "plugdev", user], check=True)
-        print(f"         Uživatel {user} přidán do: dialout, plugdev")
+        print(f"         uzivatel {user} pridan do: dialout, plugdev")
     else:
-        print(f"         Uživatel {user} přidán do: dialout (skupina plugdev na systému není)")
-    print("         → Skupiny platí po novém přihlášení nebo: newgrp dialout")
-    print("         → LiDAR musí být připojený; port nemusí být ttyUSB0 (viz ls níže).")
+        print(f"         uzivatel {user} pridan do: dialout (skupina plugdev na systemu neni)")
+    print("         -> Skupiny plati po novem prihlaseni nebo: newgrp dialout")
+    print("         -> LiDAR musi byt pripojeny; port nemusi byt ttyUSB0 (viz ls nize).")
 
     # [9a]
     print("")
-    _banner("[9a] udev — pravidla pro Xsens MTi (99-xsens-mti.rules)")
+    _banner("[9a] udev - pravidla pro Xsens MTi (99-xsens-mti.rules)")
     udev_src = xsens_ws_dir / "src" / "xsens_mti_ros2_driver" / "resources"
     if _as_bool(c["INSTALL_XSENS_UDEV"]) and udev_src.is_dir():
         rules = udev_src / "99-xsens-mti.rules"
@@ -571,17 +697,16 @@ def main() -> int:
             _sudo(["cp", str(rules), "/etc/udev/rules.d/"], check=True)
             _sudo(["udevadm", "control", "--reload-rules"], check=True)
             _sudo(["udevadm", "trigger"], check=True)
-            print("         Pravidla zkopírována a udev znovu načten.")
+            print("         Pravidla zkopirovana a udev znovu nacten.")
         else:
-            print("         Soubor 99-xsens-mti.rules nenalezen — přeskočeno.")
+            print("         Soubor 99-xsens-mti.rules nenalezen - preskoceno.")
     elif not _as_bool(c["INSTALL_XSENS_UDEV"]):
-        print("         Přeskočeno (INSTALL_XSENS_UDEV=0).")
-    else:
-        print("         Adresář resources/ nenalezen — přeskočeno (chybí Xsens driver ve src?).")
+        print("         Preskoceno (INSTALL_XSENS_UDEV=0).")    else:
+        print("         Adresar resources/ nenalezen - preskoceno (chybi Xsens driver ve src?).")
 
     # [9b]
     print("")
-    _banner("[9b] systemd — jednotka rmodus.service (enable)")
+    _banner("[9b] systemd - jednotka rmodus.service (enable)")
     svc_src = deploy_path / "rmodus.service"
     ep_tpl = deploy_path / "rmodus_entrypoint.sh"
     if _as_bool(c["ENABLE_SYSTEMD_RMODUS"]) and svc_src.is_file() and ep_tpl.is_file():
@@ -600,9 +725,9 @@ def main() -> int:
 
         _sudo(["systemctl", "daemon-reload"], check=True)
         _sudo(["systemctl", "enable", "rmodus.service"], check=True)
-        print("         Služba rmodus povolena (enable). Start: sudo systemctl start rmodus")
+        print("         Sluzba rmodus povolena (enable). Start: sudo systemctl start rmodus")
     elif not _as_bool(c["ENABLE_SYSTEMD_RMODUS"]):
-        print("         Přeskočeno (ENABLE_SYSTEMD_RMODUS=0).")
+        print("         Preskoceno (ENABLE_SYSTEMD_RMODUS=0).")
     else:
         print(f"         Chybí {svc_src} nebo {ep_tpl} v {deploy_path}.")
 
