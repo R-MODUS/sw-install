@@ -585,22 +585,19 @@ def main() -> int:
         print("  (6a0) vlastni rosdep pravidla R-MODUS - preskoceno (INSTALL_RMODUS_ROSDEP_RULES=0)")
 
     print("  (6a1) rosdep install - systemove (a pip) zavislosti z package.xml")
-    _run(
-        [
-            "rosdep",
-            "install",
-            "--from-paths",
-            "src",
-            "--ignore-src",
-            "-y",
-            "--rosdistro",
-            ros_distro,
-            "--skip-keys",
-            "cmake_modules",
-        ],
-        cwd=ws_path,
-        check=True,
-    )
+    rosdep_cmd: list[str] = [
+        "rosdep",
+        "install",
+        "--from-paths",
+        "src",
+        "--ignore-src",
+        "-y",
+        "--rosdistro",
+        ros_distro,
+    ]
+    for skip in ("cmake_modules", "ament_python"):
+        rosdep_cmd.extend(["--skip-keys", skip])
+    _run(rosdep_cmd, cwd=ws_path, check=True)
 
     if _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
         print("  (6a2) pip install - rmodus_* s requirements-pip.txt (PEP 668: --user --break-system-packages)")
