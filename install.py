@@ -34,7 +34,7 @@ DEFAULTS: dict[str, str] = {
     "WS_PATH": str(Path.home() / "rmodus_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus_setup"),
     "FETCH_SW_NAV_MODULE": "1",
-    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_autonomy",
+    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description", #rmodus_autonomy
     "SW_NAV_BRANCH": "main",
     "FETCH_XSENS_DRIVER": "0",
     "BUILD_XSPUBLIC": "1",
