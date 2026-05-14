@@ -6,6 +6,7 @@ R-MODUS — instalace ROS 2 Jazzy + workspace na Raspberry Pi (Ubuntu).
 from __future__ import annotations
 
 import getpass
+import io
 import os
 import re
 import shutil
@@ -14,7 +15,21 @@ import sys
 from pathlib import Path
 
 
-DEFAULTS: dict[str, str] = {
+def _force_line_buffered_stdio() -> None:
+    """Print jde hned na konzoli i při spuštění z roury nebo bez plného TTY."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (OSError, ValueError, AttributeError, io.UnsupportedOperation):
+            pass
+
+
+_force_line_buffered_stdio()
+
+
+c: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
     "WS_PATH": str(Path.home() / "rmodus_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus_setup"),

@@ -5,6 +5,7 @@ set -euo pipefail
 # Tiší needrestart / méně překrývaného výstupu při apt v SSH
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
+export PYTHONUNBUFFERED=1
 
 REPO_URL="${RMODUS_REPO_URL:-https://github.com/R-MODUS/sw-install.git}"
 REPO_DIR="${RMODUS_REPO_DIR:-${HOME}/rmodus_setup}"
