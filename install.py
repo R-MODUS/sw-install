@@ -126,6 +126,47 @@ def _apt(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[
     )
 
 
+def _ubuntu_deb_mirror() -> str:
+    """Oficialni mirror: ports pro ARM atd., archive pro amd64."""
+    a = _dpkg_arch()
+    if a in ("arm64", "armhf", "riscv64", "ppc64el", "s390x", "mips64el"):
+        return "http://ports.ubuntu.com/ubuntu-ports"
+    return "http://archive.ubuntu.com/ubuntu"
+
+
+def _apt_sources_text_blob() -> str:
+    parts: list[str] = []
+    root = Path("/etc/apt/sources.list")
+    if root.is_file():
+        try:
+            parts.append(root.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    d = Path("/etc/apt/sources.list.d")
+    if d.is_dir():
+        for p in sorted(d.iterdir()):
+            if p.suffix in (".list", ".sources") or p.name == "ubuntu.sources":
+                try:
+                    parts.append(p.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    pass
+    return "\n".join(parts)
+
+
+def _apt_sources_have_updates_suite(codename: str) -> bool:
+    return f"{codename}-updates" in _apt_sources_text_blob()
+
+
+def _apt_write_updates_list(codename: str) -> None:
+    uri = _ubuntu_deb_mirror()
+    body = (
+        "# Added by RMODUS install.py: pocket *-updates (minimalni image casto ma jen +security; "
+        "bez updates byva nesoulad bzip2 vs libbz2).\n"
+        f"deb {uri} {codename}-updates main restricted universe multiverse\n"
+    )
+    _sudo_write("/etc/apt/sources.list.d/rmodus-ubuntu-updates.list", body)
+
+
 def _apt_install_base_toolchain() -> None:
     _apt(["-f", "-y", "install"], check=False)
     _run(["sudo", "dpkg", "--configure", "-a"], check=False)
@@ -134,18 +175,39 @@ def _apt_install_base_toolchain() -> None:
         ["install", "-y", "--allow-downgrades", *_BASE_DEB_PKGS],
     )
     last_err: subprocess.CalledProcessError | None = None
-    for i, tail in enumerate(variants):
-        try:
-            _apt(tail, check=True)
+
+    def try_variants(*, warn_on_first_round: bool) -> bool:
+        nonlocal last_err
+        for i, tail in enumerate(variants):
+            try:
+                _apt(tail, check=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                last_err = e
+                if warn_on_first_round and i == 0:
+                    print(
+                        "  VAROVANI: apt install selhal (casto nesoulad libbz2/bzip2); "
+                        "opakuji s --allow-downgrades...",
+                        file=sys.stderr,
+                    )
+        return False
+
+    if try_variants(warn_on_first_round=True):
+        return
+
+    osr = _read_os_release()
+    codename = (osr.get("VERSION_CODENAME") or "").strip()
+    if codename and osr.get("ID") == "ubuntu" and not _apt_sources_have_updates_suite(codename):
+        print(
+            f"  INFO: v apt chybi pocket {codename}-updates; pridavam "
+            "rmodus-ubuntu-updates.list a znovu apt-get update.",
+            file=sys.stderr,
+        )
+        _apt_write_updates_list(codename)
+        _apt(["update"], check=True)
+        if try_variants(warn_on_first_round=False):
             return
-        except subprocess.CalledProcessError as e:
-            last_err = e
-            if i == 0:
-                print(
-                    "  VAROVANI: apt install selhal (casto nesoulad libbz2/bzip2); "
-                    "opakuji s --allow-downgrades...",
-                    file=sys.stderr,
-                )
+
     assert last_err is not None
     print(
         "CHYBA: zakladni apt balicky nelze nainstalovat. Diagnostika: "
