@@ -4,11 +4,21 @@
 sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubusercontent.com/R-MODUS/sw-install/main/bootstrap.sh | bash
 ```
 
-Instalaci spusťte pod uživatelem **admin** (služba `rmodus.service` je pro `/home/admin`).
+(Při potížích s výstupem zkuste `curl -SL` bez `-s`, ať vidíte případné chyby ze stažení.)
+
+**Důležité:** na větvi **`main`** na GitHubu musí být soubor **`install.py`**. Pokud po `ls ~/rmodus_setup` `install.py` nevidíte, změny nejsou pushnuté — po pushnutí na Pi: `cd ~/rmodus_setup && git fetch origin && git reset --hard origin/main` a znovu spusťte bootstrap / `python3 -u install.py`.
+
+**Bootstrap** doinstaluje `python3` a `git` (chybí-li), stáhne repozitář a spustí **`python3 -u install.py`** (nebufferovaný výpis). Nastaví také `NEEDRESTART_MODE=a`, aby apt po upgradu méně kazil výstup v SSH.
+
+Instalaci spusťte pod uživatelem **admin** (šablona `rmodus.service` používá `User=__SERVICE_USER__` — při instalaci se doplní aktuální uživatel).
+
+Hlavní logika je v **`install.py`**. **`rmodus_install.sh`** jen volá `python3 install.py` kvůli starým návodům.
+
+Sdílené proměnné ROS 2: **`rmodus_ros.env`** v adresáři deploy (`DEPLOY_PATH`, výchozí `~/rmodus_setup`). Doplní se do `~/.bashrc` a do vygenerovaného `~/rmodus_entrypoint.sh`.
 
 ### Volitelná konfigurace (`rmodus_install.conf`)
 
-V adresáři `rmodus_setup` můžete zkopírovat `rmodus_install.conf.example` → `rmodus_install.conf` a vypínat např. Xsens, rf2o nebo měnit sparse složky ze `sw-nav-module`. Soubor `rmodus_install.conf` je v `.gitignore` (lokální úpravy se necommitují). Jiná cesta: `export RMODUS_INSTALL_CONF=/cesta/k/conf` před spuštěním skriptu.
+V adresáři `rmodus_setup` upravte `rmodus_install.conf` (nebo `export RMODUS_INSTALL_CONF=…` před spuštěním). Volitelné klíče: `INSTALL_RMODUS_ROSDEP_RULES`, `RMODUS_ROSDEP_YAML_URL`, `INSTALL_RMODUS_HW_PIP` (pip z `rmodus_hw/requirements-pip.txt` po rosdep).
 
 ```bash
 sudo systemctl stop rmodus
@@ -16,18 +26,10 @@ sudo systemctl restart rmodus
 journalctl -u rmodus -f
 ```
 
-sudo swapoff -a
-sudo fallocate -l 4G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
+Ruční přeinstalace z klonu:
 
-source /opt/ros/jazzy/setup.bash
-source ~/rmodus_ws/install/setup.bash
-
-rm -rf ~/rmodus_ws
+```bash
 cd ~/rmodus_setup
-git fetch origin
-git reset --hard origin/main
-bash rmodus_install.sh
-cd ..
+git fetch origin && git reset --hard origin/main
+python3 install.py
+```

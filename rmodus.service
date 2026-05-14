@@ -4,9 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=admin
-# Spouštíme univerzální entrypoint skript (uživatel admin na Raspberry Pi)
-ExecStart=/usr/bin/bash /home/admin/rmodus_entrypoint.sh
+User=__SERVICE_USER__
+ExecStart=/usr/bin/bash __ENTRYPOINT__
 Restart=on-failure
 RestartSec=5
 
