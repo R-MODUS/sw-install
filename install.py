@@ -315,6 +315,91 @@ def _ensure_rmodus_directory_layout(root: Path, deploy: Path, ws: Path) -> None:
                 p.write_text("", encoding="utf-8")
 
 
+def _rmdir_if_empty(path: Path) -> None:
+    try:
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    except OSError:
+        pass
+
+
+_CFG_SEED_EXT = frozenset({".yaml", ".yml", ".json", ".conf", ".cfg", ".xml"})
+_DATA_SEED_EXT = frozenset({".pdf", ".PDF"})
+
+
+def _move_rmodus_defaults(deploy_path: Path, rmodus_root: Path) -> None:
+    """Presune obsah ~/rmodus/setup/defaults/{configs,data}/ do ~/rmodus/configs|data.
+
+    Platne soubory v defaults/ (koren) rozradi podle pripony (.yaml/.json/.xml -> configs, .pdf -> data).
+    Cil uz existuje = preskok (nevymazeme uzivatelsky obsah).
+    Ve setup po presunu ostane jen prazdny defaults/ + .gitkeep (pres git pull doplnitelne).
+    """
+    src_base = deploy_path / "defaults"
+    if not src_base.is_dir():
+        return
+
+    cfg_dst = rmodus_root / "configs"
+    data_dst = rmodus_root / "data"
+    cfg_dst.mkdir(parents=True, exist_ok=True)
+    data_dst.mkdir(parents=True, exist_ok=True)
+
+    def do_move(origin: Path, destination: Path) -> None:
+        if destination.exists():
+            print(
+                f"         VAROVANI: cil uz existuje, preskakuji presun: {destination}",
+                file=sys.stderr,
+            )
+            return
+        try:
+            shutil.move(str(origin), str(destination))
+            print(f"         presunuto: {origin.relative_to(deploy_path)} -> {destination.relative_to(rmodus_root)}")
+        except OSError as exc:
+            print(f"         VAROVANI: presun selhal ({origin.name}): {exc}", file=sys.stderr)
+
+    for sub, dst in (
+        ("configs", cfg_dst),
+        ("data", data_dst),
+    ):
+        subdir = src_base / sub
+        if not subdir.is_dir():
+            continue
+        for item in sorted(subdir.iterdir(), key=lambda p: p.name.lower()):
+            if item.name == ".gitkeep":
+                continue
+            do_move(item, dst / item.name)
+
+    skip_names = frozenset({"configs", "data", ".gitkeep"})
+    for item in sorted(src_base.iterdir(), key=lambda p: p.name.lower()):
+        if item.name in skip_names:
+            continue
+        if item.is_dir():
+            print(f"         VAROVANI: neocekavana slozka v defaults/ ({item.name}) - preskakuji.", file=sys.stderr)
+            continue
+        if not item.is_file():
+            continue
+        suf = item.suffix.lower()
+        if suf in _CFG_SEED_EXT:
+            do_move(item, cfg_dst / item.name)
+        elif suf in _DATA_SEED_EXT:
+            do_move(item, data_dst / item.name)
+        else:
+            print(
+                f"         VAROVANI: neznamy typ v defaults/ ({item.name}) - rozsirte instalator nebo presunte do defaults/configs|data/",
+                file=sys.stderr,
+            )
+
+    for sub in ("configs", "data"):
+        _rmdir_if_empty(src_base / sub)
+
+    gitkeep = src_base / ".gitkeep"
+    if not gitkeep.is_file():
+        try:
+            gitkeep.parent.mkdir(parents=True, exist_ok=True)
+            gitkeep.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
+
 def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
     """Aktualizuje blok RMODUS v ~/.bashrc (vcetne stare cesty rmodus_ws / rmodus_setup)."""
     ws_setup = ws_path / "install" / "setup.bash"
@@ -535,8 +620,11 @@ def main() -> int:
     print(f"  {rmodus_root}/")
     print(f"    setup/     (sw-install, install.py, rmodus_entrypoint.sh)")
     print(f"    ros2_ws/   (colcon workspace, src/)")
-    print(f"    configs/   (prazdne, .gitkeep)")
-    print(f"    data/      (prazdne, .gitkeep)")
+    print(f"    configs/   (sem se presune setup/defaults/configs)")
+    print(f"    data/      (sem se presune setup/defaults/data)")
+    print("")
+    _banner("[0b] Presun vzorovych souboru: setup/defaults -> configs | data")
+    _move_rmodus_defaults(deploy_path, rmodus_root)
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")

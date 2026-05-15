@@ -12,9 +12,11 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 ~/rmodus/
   setup/          sw-install (install.py, bootstrap, rmodus_entrypoint.sh, rmodus_ros.env)
   ros2_ws/        colcon workspace (src/, install/)
-  configs/        prazdne (data konfigurace)
-  data/           prazdne (runtime data)
+  configs/        konfigurace (po [0b] presun ze setup/defaults/configs/)
+  data/           dokumentace a data (presun ze setup/defaults/data/)
 ```
+
+**Vzory v gitu:** ukladej je do **`setup/defaults/configs/`** (napr. `*.yaml`) a **`setup/defaults/data/`** (napr. `*.pdf`). Krok **`[0b]`** tyto soubory **presune** na `~/rmodus/configs` a `~/rmodus/data`. Pokud soubor v cili uz existuje, presun se preskoci (nevymazes uzivatelske upravy). Volitelne muzes davat soubory i primo do **`setup/defaults/`** (koren): `.yaml`/`.json`/`.xml`/… jde do `configs`, `.pdf` do `data`; jine pripony = VAROVANI. Po presunu ve `defaults/` typicky zustane jen `.gitkeep`; dalsi beh obnov soubory pres `git pull`.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 
