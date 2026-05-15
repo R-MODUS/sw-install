@@ -315,89 +315,40 @@ def _ensure_rmodus_directory_layout(root: Path, deploy: Path, ws: Path) -> None:
                 p.write_text("", encoding="utf-8")
 
 
-def _rmdir_if_empty(path: Path) -> None:
-    try:
-        if path.is_dir() and not any(path.iterdir()):
-            path.rmdir()
-    except OSError:
-        pass
+_RMODUS_MANUAL_PDF = "manual.pdf"
 
 
-_CFG_SEED_EXT = frozenset({".yaml", ".yml", ".json", ".conf", ".cfg", ".xml"})
-_DATA_SEED_EXT = frozenset({".pdf", ".PDF"})
-
-
-def _move_rmodus_defaults(deploy_path: Path, rmodus_root: Path) -> None:
-    """Presune obsah ~/rmodus/setup/defaults/{configs,data}/ do ~/rmodus/configs|data.
-
-    Platne soubory v defaults/ (koren) rozradi podle pripony (.yaml/.json/.xml -> configs, .pdf -> data).
-    Cil uz existuje = preskok (nevymazeme uzivatelsky obsah).
-    Ve setup po presunu ostane jen prazdny defaults/ + .gitkeep (pres git pull doplnitelne).
-    """
-    src_base = deploy_path / "defaults"
-    if not src_base.is_dir():
+def _copy_if_missing(src: Path, dst: Path, *, label: str) -> None:
+    """Kopie do rmodus/{configs,data}; cil uz existuje = preskok."""
+    if not src.is_file():
+        print(f"         VAROVANI: chybi zdroj ({label}): {src}", file=sys.stderr)
         return
+    if dst.exists():
+        print(
+            f"         VAROVANI: cil uz existuje, preskakuji kopii: {dst}",
+            file=sys.stderr,
+        )
+        return
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        print(f"         zkopirovano: {src} -> {dst}")
+    except OSError as exc:
+        print(f"         VAROVANI: kopie selhala ({label}): {exc}", file=sys.stderr)
 
-    cfg_dst = rmodus_root / "configs"
-    data_dst = rmodus_root / "data"
-    cfg_dst.mkdir(parents=True, exist_ok=True)
-    data_dst.mkdir(parents=True, exist_ok=True)
 
-    def do_move(origin: Path, destination: Path) -> None:
-        if destination.exists():
-            print(
-                f"         VAROVANI: cil uz existuje, preskakuji presun: {destination}",
-                file=sys.stderr,
-            )
-            return
-        try:
-            shutil.move(str(origin), str(destination))
-            print(f"         presunuto: {origin.relative_to(deploy_path)} -> {destination.relative_to(rmodus_root)}")
-        except OSError as exc:
-            print(f"         VAROVANI: presun selhal ({origin.name}): {exc}", file=sys.stderr)
+def _seed_rmodus_manual_from_setup(deploy_path: Path, rmodus_root: Path) -> None:
+    """PDF navod v koreni sw-install -> ~/rmodus/data/manual.pdf (kopie, git zustava)."""
+    src = deploy_path / _RMODUS_MANUAL_PDF
+    dst = rmodus_root / "data" / _RMODUS_MANUAL_PDF
+    _copy_if_missing(src, dst, label="manual.pdf")
 
-    for sub, dst in (
-        ("configs", cfg_dst),
-        ("data", data_dst),
-    ):
-        subdir = src_base / sub
-        if not subdir.is_dir():
-            continue
-        for item in sorted(subdir.iterdir(), key=lambda p: p.name.lower()):
-            if item.name == ".gitkeep":
-                continue
-            do_move(item, dst / item.name)
 
-    skip_names = frozenset({"configs", "data", ".gitkeep"})
-    for item in sorted(src_base.iterdir(), key=lambda p: p.name.lower()):
-        if item.name in skip_names:
-            continue
-        if item.is_dir():
-            print(f"         VAROVANI: neocekavana slozka v defaults/ ({item.name}) - preskakuji.", file=sys.stderr)
-            continue
-        if not item.is_file():
-            continue
-        suf = item.suffix.lower()
-        if suf in _CFG_SEED_EXT:
-            do_move(item, cfg_dst / item.name)
-        elif suf in _DATA_SEED_EXT:
-            do_move(item, data_dst / item.name)
-        else:
-            print(
-                f"         VAROVANI: neznamy typ v defaults/ ({item.name}) - rozsirte instalator nebo presunte do defaults/configs|data/",
-                file=sys.stderr,
-            )
-
-    for sub in ("configs", "data"):
-        _rmdir_if_empty(src_base / sub)
-
-    gitkeep = src_base / ".gitkeep"
-    if not gitkeep.is_file():
-        try:
-            gitkeep.parent.mkdir(parents=True, exist_ok=True)
-            gitkeep.write_text("", encoding="utf-8")
-        except OSError:
-            pass
+def _seed_rmodus_configs_from_nav_hw(rmodus_root: Path, snav_dir: Path) -> None:
+    """Vychozi robot.yaml ze sw-nav-module (balik rmodus_hw) -> ~/rmodus/configs/robot.yaml."""
+    src = snav_dir / "rmodus_hw" / "config" / "robot.yaml"
+    dst = rmodus_root / "configs" / "robot.yaml"
+    _copy_if_missing(src, dst, label="rmodus_hw/config/robot.yaml")
 
 
 def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
@@ -620,11 +571,11 @@ def main() -> int:
     print(f"  {rmodus_root}/")
     print(f"    setup/     (sw-install, install.py, rmodus_entrypoint.sh)")
     print(f"    ros2_ws/   (colcon workspace, src/)")
-    print(f"    configs/   (sem se presune setup/defaults/configs)")
-    print(f"    data/      (sem se presune setup/defaults/data)")
+    print(f"    configs/   (kopie rmodus_hw/config/robot.yaml po klonu sw-nav)")
+    print(f"    data/      (kopie {_RMODUS_MANUAL_PDF} z korene sw-install)")
     print("")
-    _banner("[0b] Presun vzorovych souboru: setup/defaults -> configs | data")
-    _move_rmodus_defaults(deploy_path, rmodus_root)
+    _banner(f"[0b] Manual: setup/{_RMODUS_MANUAL_PDF} -> ~/rmodus/data/")
+    _seed_rmodus_manual_from_setup(deploy_path, rmodus_root)
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
@@ -732,6 +683,16 @@ def main() -> int:
             )
     else:
         print("  (4c) rf2o - preskoceno (FETCH_RF2O=0)")
+
+    print("")
+    _banner("[4d] Kopie vychoziho robot.yaml do ~/rmodus/configs/")
+    if _as_bool(c["FETCH_SW_NAV_MODULE"]):
+        _seed_rmodus_configs_from_nav_hw(rmodus_root, snav_dir)
+    else:
+        print(
+            "         preskoceno (FETCH_SW_NAV_MODULE=0) - zdroj rmodus_hw/config/robot.yaml neni.",
+            file=sys.stderr,
+        )
 
     # [5]
     print("")

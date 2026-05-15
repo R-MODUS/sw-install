@@ -12,11 +12,12 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 ~/rmodus/
   setup/          sw-install (install.py, bootstrap, rmodus_entrypoint.sh, rmodus_ros.env)
   ros2_ws/        colcon workspace (src/, install/)
-  configs/        konfigurace (po [0b] presun ze setup/defaults/configs/)
-  data/           dokumentace a data (presun ze setup/defaults/data/)
+  configs/        vychozi `robot.yaml` (kopie z ros2_ws/.../rmodus_hw/config po klonu, krok **[4d]**)
+  data/           kopie **`manual.pdf`** z korene sw-install (`setup/manual.pdf`), krok **[0b]**
 ```
 
-**Vzory v gitu:** ukladej je do **`setup/defaults/configs/`** (napr. `*.yaml`) a **`setup/defaults/data/`** (napr. `*.pdf`). Krok **`[0b]`** tyto soubory **presune** na `~/rmodus/configs` a `~/rmodus/data`. Pokud soubor v cili uz existuje, presun se preskoci (nevymazes uzivatelske upravy). Volitelne muzes davat soubory i primo do **`setup/defaults/`** (koren): `.yaml`/`.json`/`.xml`/… jde do `configs`, `.pdf` do `data`; jine pripony = VAROVANI. Po presunu ve `defaults/` typicky zustane jen `.gitkeep`; dalsi beh obnov soubory pres `git pull`.
+- **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
+- **`robot.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`ros2_ws/src/sw_nav_module/rmodus_hw/config/robot.yaml`** (jediny zdroj pravdy je **sw-nav-module**). Pokud cil **`~/rmodus/configs/robot.yaml`** uz existuje, kopie se preskoci. Bez `FETCH_SW_NAV_MODULE` krok **[4d]** vypise VAROVANI.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 
