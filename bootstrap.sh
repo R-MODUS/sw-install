@@ -8,7 +8,7 @@ export NEEDRESTART_MODE=a
 export PYTHONUNBUFFERED=1
 
 REPO_URL="${RMODUS_REPO_URL:-https://github.com/R-MODUS/sw-install.git}"
-REPO_DIR="${RMODUS_REPO_DIR:-${HOME}/rmodus_setup}"
+REPO_DIR="${RMODUS_REPO_DIR:-${HOME}/rmodus/setup}"
 
 _apt_update_once() {
   if [[ -z "${_RMODUS_BOOT_APT:-}" ]]; then

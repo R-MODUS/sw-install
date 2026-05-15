@@ -31,8 +31,8 @@ _force_line_buffered_stdio()
 
 DEFAULTS: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
-    "WS_PATH": str(Path.home() / "rmodus_ws"),
-    "DEPLOY_PATH": str(Path.home() / "rmodus_setup"),
+    "WS_PATH": str(Path.home() / "rmodus" / "ros2_ws"),
+    "DEPLOY_PATH": str(Path.home() / "rmodus" / "setup"),
     "FETCH_SW_NAV_MODULE": "1",
     "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description", #rmodus_autonomy
     "SW_NAV_BRANCH": "dev",
