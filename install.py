@@ -403,9 +403,11 @@ def _postinstall_verify_ros_sourced(ros_distro: str, ws_path: Path, ros_env: Pat
         parts.append(f'test -f "{re_p}" && {{ set -a; source "{re_p}"; set +a; }}')
     parts.append(f'source "{ros_setup.resolve()}"')
     parts.append(f'source "{ws_setup.resolve()}"')
-    parts.append("ros2 --version")
+    # ros2 --version neni ve vsech distro podporovane; -h overi ze CLI bezi
+    parts.append("ros2 -h >/dev/null 2>&1")
     print("         (podshell; pro SSH shell: source ~/.bashrc)")
     _bash_script(" && ".join(parts))
+    print("         overeni: ros2 CLI OK (ros2 -h)")
 
 
 def _render_entrypoint_in_setup(deploy_path: Path, ros_distro: str, ws_path: Path) -> Path:
