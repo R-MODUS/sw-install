@@ -31,6 +31,7 @@ _force_line_buffered_stdio()
 
 DEFAULTS: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
+    "RMODUS_ROOT": str(Path.home() / "rmodus"),
     "WS_PATH": str(Path.home() / "rmodus" / "ros2_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus" / "setup"),
     "FETCH_SW_NAV_MODULE": "1",
@@ -285,6 +286,106 @@ def _bash_script(script: str, *, cwd: Path | None = None, env: dict[str, str] | 
     _run(["/bin/bash", "-lc", script], check=True, cwd=cwd, env=merged)
 
 
+_RMODUS_BASHRC_BEGIN = "# --- RMODUS (pridano install.py) ---"
+_RMODUS_BASHRC_END = "# --- /RMODUS ---"
+
+
+def _resolve_rmodus_paths(c: dict[str, str]) -> tuple[Path, Path, Path]:
+    root = Path(c.get("RMODUS_ROOT", str(Path.home() / "rmodus"))).expanduser().resolve()
+    deploy = Path(c.get("DEPLOY_PATH", str(root / "setup"))).expanduser().resolve()
+    ws = Path(c.get("WS_PATH", str(root / "ros2_ws"))).expanduser().resolve()
+    return root, deploy, ws
+
+
+def _ensure_rmodus_directory_layout(root: Path, deploy: Path, ws: Path) -> None:
+    """~/rmodus/{setup,ros2_ws,configs,data} pred zbytkem instalace."""
+    for d in (
+        root,
+        deploy,
+        ws,
+        ws / "src",
+        root / "configs",
+        root / "data",
+    ):
+        d.mkdir(parents=True, exist_ok=True)
+    for name in (".gitkeep",):
+        for empty_dir in (root / "configs", root / "data"):
+            p = empty_dir / name
+            if not p.is_file():
+                p.write_text("", encoding="utf-8")
+
+
+def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
+    """Aktualizuje blok RMODUS v ~/.bashrc (vcetne stare cesty rmodus_ws / rmodus_setup)."""
+    ws_setup = ws_path / "install" / "setup.bash"
+    block = (
+        f"{_RMODUS_BASHRC_BEGIN}\n"
+        f'test -f "{ros_env.resolve()}" && {{ set -a; source "{ros_env.resolve()}"; set +a; }}\n'
+        f'source "/opt/ros/{ros_distro}/setup.bash"\n'
+        f'test -f "{ws_setup.resolve()}" && source "{ws_setup.resolve()}"\n'
+        f"{_RMODUS_BASHRC_END}\n"
+    )
+    if not bashrc.is_file():
+        bashrc.write_text(block, encoding="utf-8")
+        print("         vytvoren ~/.bashrc s blokem RMODUS")
+        return
+    text = bashrc.read_text(encoding="utf-8", errors="replace")
+    if _RMODUS_BASHRC_BEGIN in text:
+        start = text.index(_RMODUS_BASHRC_BEGIN)
+        end = text.find(_RMODUS_BASHRC_END, start)
+        if end != -1:
+            end = end + len(_RMODUS_BASHRC_END)
+            while end < len(text) and text[end] in "\r\n":
+                end += 1
+            text = text[:start] + block + text[end:]
+        else:
+            text = text[:start] + block
+        bashrc.write_text(text, encoding="utf-8")
+        print("         blok RMODUS v ~/.bashrc aktualizovan")
+        return
+    if f"/opt/ros/{ros_distro}/setup.bash" in text:
+        with bashrc.open("a", encoding="utf-8") as f:
+            f.write("\n" + block)
+        print("         blok RMODUS pridan do ~/.bashrc")
+        return
+    bashrc.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block, encoding="utf-8")
+    print("         blok RMODUS pridan do ~/.bashrc")
+
+
+def _postinstall_verify_ros_sourced(ros_distro: str, ws_path: Path, ros_env: Path) -> None:
+    ros_setup = Path(f"/opt/ros/{ros_distro}/setup.bash")
+    ws_setup = ws_path / "install" / "setup.bash"
+    if not ros_setup.is_file():
+        print(f"         VAROVANI: chybi {ros_setup} - preskakuji overeni", file=sys.stderr)
+        return
+    if not ws_setup.is_file():
+        print(f"         VAROVANI: chybi {ws_setup} - preskakuji overeni", file=sys.stderr)
+        return
+    parts: list[str] = []
+    if ros_env.is_file():
+        re_p = str(ros_env.resolve())
+        parts.append(f'test -f "{re_p}" && {{ set -a; source "{re_p}"; set +a; }}')
+    parts.append(f'source "{ros_setup.resolve()}"')
+    parts.append(f'source "{ws_setup.resolve()}"')
+    parts.append("ros2 --version")
+    print("         (podshell; pro SSH shell: source ~/.bashrc)")
+    _bash_script(" && ".join(parts))
+
+
+def _render_entrypoint_in_setup(deploy_path: Path, ros_distro: str, ws_path: Path) -> Path:
+    """Jedina kopie entrypointu: deploy_path/rmodus_entrypoint.sh (sablona z gitu doplnena na miste)."""
+    ep = deploy_path / "rmodus_entrypoint.sh"
+    if not ep.is_file():
+        raise FileNotFoundError(ep)
+    body = ep.read_text(encoding="utf-8")
+    body = body.replace("__DEPLOY_PATH__", str(deploy_path.resolve()))
+    body = body.replace("__ROS_DISTRO__", ros_distro)
+    body = body.replace("__WS_PATH__", str(ws_path.resolve()))
+    ep.write_text(body, encoding="utf-8")
+    os.chmod(ep, 0o755)
+    return ep.resolve()
+
+
 def _find_package_xml_under(src: Path) -> bool:
     return any(src.rglob("package.xml"))
 
@@ -414,9 +515,12 @@ def main() -> int:
     conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
     c = load_install_conf(conf_path)
 
+    rmodus_root, deploy_path, ws_path = _resolve_rmodus_paths(c)
+    c["RMODUS_ROOT"] = str(rmodus_root)
+    c["DEPLOY_PATH"] = str(deploy_path)
+    c["WS_PATH"] = str(ws_path)
+
     ros_distro = c["ROS_DISTRO"]
-    ws_path = Path(c["WS_PATH"]).expanduser()
-    deploy_path = Path(c["DEPLOY_PATH"]).expanduser()
     xsens_ws_dir = ws_path / "src" / "xsens_mti_driver"
     rf2o_dir = ws_path / "src" / "rf2o_laser_odometry"
     snav_dir = ws_path / "src" / "sw_nav_module"
@@ -426,7 +530,13 @@ def main() -> int:
     home = Path.home()
 
     print("")
-    _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
+    _banner("[0] Strom adresaru ~/rmodus")
+    _ensure_rmodus_directory_layout(rmodus_root, deploy_path, ws_path)
+    print(f"  {rmodus_root}/")
+    print(f"    setup/     (sw-install, install.py, rmodus_entrypoint.sh)")
+    print(f"    ros2_ws/   (colcon workspace, src/)")
+    print(f"    configs/   (prazdne, .gitkeep)")
+    print(f"    data/      (prazdne, .gitkeep)")
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
@@ -439,6 +549,8 @@ def main() -> int:
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
     print(f"  pip rmodus_*: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
+
+    _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
 
     _ensure_swap(c)
 
@@ -666,24 +778,13 @@ def main() -> int:
 
     # [7]
     print("")
-    _banner("[7] ~/.bashrc - source /opt/ros a install/setup.bash")
+    _banner("[7] ~/.bashrc - source /opt/ros a ros2_ws/install/setup.bash")
     bashrc = home / ".bashrc"
-    marker = f"/opt/ros/{ros_distro}/setup.bash"
     ros_env = deploy_path / "rmodus_ros.env"
-    if bashrc.is_file() and Path(f"/opt/ros/{ros_distro}/setup.bash").is_file():
-        text = bashrc.read_text(encoding="utf-8", errors="replace")
-        if marker not in text:
-            block = (
-                "\n# --- RMODUS (pridano install.py) ---\n"
-                f'test -f "{ros_env}" && {{ set -a; source "{ros_env}"; set +a; }}\n'
-                f"source /opt/ros/{ros_distro}/setup.bash\n"
-                f'test -f "{ws_path}/install/setup.bash" && source "{ws_path}/install/setup.bash"\n'
-            )
-            with bashrc.open("a", encoding="utf-8") as f:
-                f.write(block)
-            print("         radky pridany do ~/.bashrc")
-        else:
-            print("         ~/.bashrc uz obsahuje source pro ROS - beze zmeny")
+    if Path(f"/opt/ros/{ros_distro}/setup.bash").is_file():
+        _update_bashrc_rmodus(bashrc, ros_distro, ws_path, ros_env)
+    else:
+        print(f"         VAROVANI: chybi /opt/ros/{ros_distro}/setup.bash - bashrc beze zmeny", file=sys.stderr)
 
     # [8]
     print("")
@@ -722,17 +823,16 @@ def main() -> int:
     svc_src = deploy_path / "rmodus.service"
     ep_tpl = deploy_path / "rmodus_entrypoint.sh"
     if _as_bool(c["ENABLE_SYSTEMD_RMODUS"]) and svc_src.is_file() and ep_tpl.is_file():
-        ep_body = ep_tpl.read_text(encoding="utf-8")
-        ep_body = ep_body.replace("__DEPLOY_PATH__", str(deploy_path.resolve()))
-        ep_body = ep_body.replace("__ROS_DISTRO__", ros_distro)
-        ep_body = ep_body.replace("__WS_PATH__", str(ws_path.resolve()))
-        entry_dst = home / "rmodus_entrypoint.sh"
-        entry_dst.write_text(ep_body, encoding="utf-8")
-        os.chmod(entry_dst, 0o755)
+        entry_path = _render_entrypoint_in_setup(deploy_path, ros_distro, ws_path)
+        print(f"         entrypoint: {entry_path}")
+        stale_home_ep = home / "rmodus_entrypoint.sh"
+        if stale_home_ep.is_file() and stale_home_ep.resolve() != entry_path:
+            stale_home_ep.unlink()
+            print(f"         odstranena zastarala kopie: {stale_home_ep}")
 
         svc_body = svc_src.read_text(encoding="utf-8")
         svc_body = svc_body.replace("__SERVICE_USER__", user)
-        svc_body = svc_body.replace("__ENTRYPOINT__", str(entry_dst.resolve()))
+        svc_body = svc_body.replace("__ENTRYPOINT__", str(entry_path))
         _sudo_write("/etc/systemd/system/rmodus.service", svc_body)
 
         _sudo(["systemctl", "daemon-reload"], check=True)
@@ -745,9 +845,16 @@ def main() -> int:
 
     # [10]
     print("")
+    _banner("[10] Overeni: source ROS + ros2_ws (stejne jako bashrc / entrypoint)")
+    _postinstall_verify_ros_sourced(ros_distro, ws_path, ros_env)
+
+    # [11]
+    print("")
     _banner("HOTOVE")
+    print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
+    print("  * Entrypoint:       ~/rmodus/setup/rmodus_entrypoint.sh")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
-    print("  * ROS v shellu:     source ~/.bashrc")
+    print("  * ROS v SSH shellu: source ~/.bashrc")
     print("  * Overeni:          ros2 doctor")
     print(f"  * ROS domena / RMW: {ros_env}")
     print("  * Seriove porty:    ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true")

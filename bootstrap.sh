@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Stahne sw-install, doinstaluje python3 / git, spusti install.py
+# Stahne sw-install do ~/rmodus/setup, doinstaluje python3 / git, spusti install.py
 set -euo pipefail
 
-# Tisi needrestart / mene prekryvaneho vystupu pri apt v SSH
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 export PYTHONUNBUFFERED=1
 
+RMODUS_ROOT="${RMODUS_ROOT:-${HOME}/rmodus}"
 REPO_URL="${RMODUS_REPO_URL:-https://github.com/R-MODUS/sw-install.git}"
-REPO_DIR="${RMODUS_REPO_DIR:-${HOME}/rmodus/setup}"
+REPO_DIR="${RMODUS_REPO_DIR:-${RMODUS_ROOT}/setup}"
+
+echo "[bootstrap] Strom adresaru:"
+echo "  ${RMODUS_ROOT}/setup     (tento repozitar)"
+echo "  ${RMODUS_ROOT}/ros2_ws   (colcon workspace)"
+echo "  ${RMODUS_ROOT}/configs"
+echo "  ${RMODUS_ROOT}/data"
+mkdir -p "${RMODUS_ROOT}/setup" "${RMODUS_ROOT}/ros2_ws/src" "${RMODUS_ROOT}/configs" "${RMODUS_ROOT}/data"
+touch "${RMODUS_ROOT}/configs/.gitkeep" "${RMODUS_ROOT}/data/.gitkeep" 2>/dev/null || true
 
 _apt_update_once() {
   if [[ -z "${_RMODUS_BOOT_APT:-}" ]]; then
@@ -39,11 +47,10 @@ INSTALL_PY="${REPO_DIR}/install.py"
 if [[ ! -f "${INSTALL_PY}" ]]; then
   echo "" >&2
   echo "CHYBA: v ${REPO_DIR} chybi install.py - na GitHubu je pravdepodobne starsi main (nebyl push)." >&2
-  echo "  Po pushnuti zmen spustte na Pi:  cd ${REPO_DIR} && git fetch origin && git reset --hard origin/main" >&2
+  echo "  Po pushnuti zmen:  cd ${REPO_DIR} && git fetch origin && git reset --hard origin/main" >&2
   echo "  Obsah adresare:" >&2
   ls -la "${REPO_DIR}" >&2
   exit 1
 fi
 chmod +x "${INSTALL_PY}" 2>/dev/null || true
-# -u = nebufferovany vystup (print z install.py hned viditelny v SSH)
 exec python3 -u "${INSTALL_PY}" "$@"
