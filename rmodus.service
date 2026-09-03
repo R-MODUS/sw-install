@@ -1,6 +1,7 @@
 [Unit]
 Description=Rmodus Launch
-After=network.target
+After=network.target rmodus-network.service
+Wants=rmodus-network.service
 
 [Service]
 Type=simple

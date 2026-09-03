@@ -42,6 +42,7 @@ DEFAULTS: dict[str, str] = {
     "INSTALL_XSENS_UDEV": "1",
     "FETCH_RF2O": "0",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
+    "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
     "INSTALL_RMODUS_ROSDEP_RULES": "1",
     "RMODUS_ROSDEP_YAML_URL": "",
@@ -351,6 +352,47 @@ def _seed_rmodus_configs_from_nav_hw(rmodus_root: Path, snav_dir: Path) -> None:
     _copy_if_missing(src, dst, label="rmodus_hw/config/robot.yaml")
 
 
+def _seed_rmodus_network_yaml(rmodus_root: Path, deploy_path: Path) -> None:
+    """Vychozi network.yaml z sw-install/network -> ~/rmodus/configs/network.yaml (existujici se neprepisuje)."""
+    src = deploy_path / "network" / "network.yaml.example"
+    dst = rmodus_root / "configs" / "network.yaml"
+    _copy_if_missing(src, dst, label="network/network.yaml.example")
+
+
+_NETWORK_DEB_PKGS: tuple[str, ...] = (
+    "network-manager",
+    "dnsmasq-base",
+    "iw",
+    "rfkill",
+    "wireless-regdb",
+    "wpasupplicant",
+    "python3-yaml",
+)
+
+
+def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
+    script_src = deploy_path / "network" / "rmodus-network"
+    unit_src = deploy_path / "network" / "rmodus-network.service"
+    if not script_src.is_file() or not unit_src.is_file():
+        print(
+            f"         VAROVANI: chybi {script_src.name} nebo {unit_src.name} v {deploy_path / 'network'}",
+            file=sys.stderr,
+        )
+        return
+    _seed_rmodus_network_yaml(config_path.parent.parent, deploy_path)
+    print("         apt: network-manager dnsmasq-base iw rfkill wireless-regdb wpasupplicant")
+    _apt(["install", "-y", *_NETWORK_DEB_PKGS], check=True)
+    _sudo(["systemctl", "enable", "NetworkManager"], check=False)
+    _sudo(["systemctl", "start", "NetworkManager"], check=False)
+    _sudo(["install", "-m", "755", str(script_src), "/usr/local/sbin/rmodus-network"], check=True)
+    body = unit_src.read_text(encoding="utf-8").replace("__NETWORK_CONFIG__", str(config_path.resolve()))
+    _sudo_write("/etc/systemd/system/rmodus-network.service", body)
+    _sudo(["systemctl", "daemon-reload"], check=True)
+    _sudo(["systemctl", "enable", "rmodus-network.service"], check=True)
+    print(f"         sluzba rmodus-network povolena (enable). konfig: {config_path}")
+    print("         pri bootu (ne ted, at SSH pres WiFi nespadne): sudo systemctl start rmodus-network")
+
+
 def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
     """Aktualizuje blok RMODUS v ~/.bashrc (vcetne stare cesty rmodus_ws / rmodus_setup)."""
     ws_setup = ws_path / "install" / "setup.bash"
@@ -563,6 +605,8 @@ def main() -> int:
     rf2o_dir = ws_path / "src" / "rf2o_laser_odometry"
     snav_dir = ws_path / "src" / "sw_nav_module"
     sw_nav_dirs = c["SW_NAV_SPARSE_DIRS"].split()
+    network_yaml = rmodus_root / "configs" / "network.yaml"
+    robot_yaml = rmodus_root / "configs" / "robot.yaml"
 
     user = getpass.getuser()
     home = Path.home()
@@ -571,9 +615,9 @@ def main() -> int:
     _banner("[0] Strom adresaru ~/rmodus")
     _ensure_rmodus_directory_layout(rmodus_root, deploy_path, ws_path)
     print(f"  {rmodus_root}/")
-    print(f"    setup/     (sw-install, install.py, rmodus_entrypoint.sh)")
+    print(f"    setup/     (sw-install: install.py, network/, rmodus_entrypoint.sh)")
     print(f"    ros2_ws/   (colcon workspace, src/)")
-    print(f"    configs/   (kopie rmodus_hw/config/robot.yaml po klonu sw-nav)")
+    print(f"    configs/   (robot.yaml + network.yaml, existujici se neprepisuji)")
     print(f"    data/      (kopie {_RMODUS_MANUAL_PDF} z korene sw-install)")
     print("")
     _banner(f"[0b] Manual: setup/{_RMODUS_MANUAL_PDF} -> ~/rmodus/data/")
@@ -587,6 +631,7 @@ def main() -> int:
     print(
         f"  rf2o:   FETCH={c['FETCH_RF2O']}  samostatna faze buildu={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
+    print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
     print(f"  pip rmodus_*: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
@@ -695,6 +740,13 @@ def main() -> int:
             "         preskoceno (FETCH_SW_NAV_MODULE=0) - zdroj rmodus_hw/config/robot.yaml neni.",
             file=sys.stderr,
         )
+
+    print("")
+    _banner("[4e] Sitova konfigurace - network.yaml do ~/rmodus/configs/")
+    if _as_bool(c["ENABLE_RMODUS_NETWORK"]):
+        _seed_rmodus_network_yaml(rmodus_root, deploy_path)
+    else:
+        print("  (4e) Sitova konfigurace - preskoceno (ENABLE_RMODUS_NETWORK=0)")
 
     # [5]
     print("")
@@ -870,7 +922,16 @@ def main() -> int:
 
     # [9b]
     print("")
-    _banner("[9b] systemd - jednotka rmodus.service (enable)")
+    _banner("[9b] systemd - rmodus-network.service (WiFi client/AP, enable bez startu)")
+    if _as_bool(c["ENABLE_RMODUS_NETWORK"]):
+        net_cfg_target = robot_yaml if robot_yaml.is_file() else network_yaml
+        _install_rmodus_network(deploy_path, net_cfg_target)
+    else:
+        print("         Preskoceno (ENABLE_RMODUS_NETWORK=0).")
+
+    # [9c]
+    print("")
+    _banner("[9c] systemd - jednotka rmodus.service (enable)")
     svc_src = deploy_path / "rmodus.service"
     ep_tpl = deploy_path / "rmodus_entrypoint.sh"
     if _as_bool(c["ENABLE_SYSTEMD_RMODUS"]) and svc_src.is_file() and ep_tpl.is_file():
@@ -904,6 +965,8 @@ def main() -> int:
     _banner("HOTOVE")
     print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
     print("  * Entrypoint:       ~/rmodus/setup/rmodus_entrypoint.sh")
+    print("  * WiFi konfig:      ~/rmodus/configs/network.yaml  (mode/ssid/password)")
+    print("  * WiFi sluzba:      sudo systemctl start rmodus-network   (nebo reboot)")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
     print("  * ROS v SSH shellu: source ~/.bashrc")
     print("  * Overeni:          ros2 doctor")

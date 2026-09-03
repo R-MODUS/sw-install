@@ -1,0 +1,458 @@
+#!/usr/bin/python3
+"""Aplikuje WiFi rezim z konfigurace (blok 'network:' v robot.yaml nebo network.yaml) pres NetworkManager."""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+CLIENT_CON = "rmodus-wifi-client"
+AP_CON = "rmodus-wifi-ap"
+DEFAULT_AP_ADDRESS = "192.168.50.1/24"
+DEFAULT_COUNTRY = "CZ"
+DEFAULT_FALLBACK_SSID = "R-MODUS-AP"
+DEFAULT_FALLBACK_PASSWORD = "rmoduspassword"
+DEFAULT_FALLBACK_TIMEOUT = 30
+
+
+def _log(msg: str) -> None:
+    print(f"rmodus-network: {msg}", flush=True)
+
+
+def _run(cmd: list[str], *, check: bool = True, quiet: bool = False) -> subprocess.CompletedProcess[str]:
+    shown = []
+    skip_next = False
+    for i, part in enumerate(cmd):
+        if skip_next:
+            skip_next = False
+            shown.append("<redacted>")
+            continue
+        if part in ("wifi-sec.psk", "802-11-wireless-security.psk") and i + 1 < len(cmd):
+            shown.append(part)
+            skip_next = True
+            continue
+        shown.append(part)
+    if not quiet:
+        _log("+ " + " ".join(shown))
+    return subprocess.run(cmd, check=check, text=True, capture_output=True)
+
+
+def _nmcli(*args: str, check: bool = True, quiet: bool = False) -> subprocess.CompletedProcess[str]:
+    return _run(["nmcli", *args], check=check, quiet=quiet)
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on", "y")
+
+
+def _clean_val(val: str) -> Any:
+    val = val.strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1]
+    low = val.lower()
+    if low in ("true", "yes", "on"):
+        return True
+    if low in ("false", "no", "off"):
+        return False
+    if val.isdigit():
+        return int(val)
+    return val
+
+
+def _extract_network_dict(doc: Any) -> dict[str, Any] | None:
+    if not isinstance(doc, dict):
+        return None
+    # 1. Hledáme sekci 'network:'
+    if "network" in doc and isinstance(doc["network"], dict):
+        return doc["network"]
+    # 2. Hledáme síťové klíče na nejvyšší úrovni (samostatný network.yaml bez sekce)
+    net_keys = {"mode", "ssid", "password", "ap_address", "fallback", "fallback_timeout", "fallback_ssid"}
+    if any(k in doc for k in net_keys):
+        return doc
+    return None
+
+
+def parse_network_config(path: Path) -> dict[str, Any]:
+    """Načte síťovou konfiguraci ze zadaného YAML souboru."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _log(f"Nelze přečíst {path}: {exc}")
+        return {}
+
+    # Pokus o plnohodnotný PyYAML, pokud je k dispozici
+    try:
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(text)
+        extracted = _extract_network_dict(loaded)
+        if extracted is not None:
+            return extracted
+    except ImportError:
+        pass
+    except Exception as exc:
+        _log(f"PyYAML parser selhal pro {path} ({exc}), zkouším vestavěný parser")
+
+    # Vestavěný řádkový fallback parser pro případ, že PyYAML není instalován
+    lines = text.splitlines()
+    in_network = False
+    found_network = False
+    net_dict: dict[str, Any] = {}
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == "network:" or stripped.startswith("network:"):
+            in_network = True
+            found_network = True
+            continue
+        if in_network:
+            if line.startswith(" ") or line.startswith("\t"):
+                if ":" in stripped:
+                    k, v = stripped.split(":", 1)
+                    net_dict[k.strip()] = _clean_val(v)
+            else:
+                # Konec odsazeného bloku network:
+                break
+
+    if found_network and net_dict:
+        return net_dict
+
+    # Pokud blok 'network:' nebyl nalezen, zkusíme top-level řádky (např. starší network.yaml)
+    top_dict: dict[str, Any] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        k, v = stripped.split(":", 1)
+        top_dict[k.strip()] = _clean_val(v)
+
+    extracted = _extract_network_dict(top_dict)
+    return extracted if extracted is not None else {}
+
+
+def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, Any]]:
+    """Vyhledá konfigurační soubor a vrátí dvojici (cesta, síťový slovník)."""
+    # 1. Cesta předaná jako CLI argument
+    if cli_path:
+        p = Path(cli_path).expanduser()
+        if p.is_file():
+            cfg = parse_network_config(p)
+            if cfg:
+                return p, cfg
+            # Pokud zadaný robot.yaml nemá blok network, zkusíme network.yaml ve stejné složce
+            alt = p.parent / "network.yaml"
+            if alt.is_file():
+                alt_cfg = parse_network_config(alt)
+                if alt_cfg:
+                    return alt, alt_cfg
+
+    # 2. Proměnná prostředí
+    env_p = os.environ.get("RMODUS_CONFIG") or os.environ.get("RMODUS_NETWORK_CONFIG")
+    if env_p:
+        p = Path(env_p).expanduser()
+        if p.is_file():
+            cfg = parse_network_config(p)
+            if cfg:
+                return p, cfg
+
+    # 3. Standardní vyhledávací cesty
+    candidates: list[Path] = [
+        Path.home() / "rmodus" / "configs" / "robot.yaml",
+        Path.home() / "rmodus" / "configs" / "network.yaml",
+        Path.home() / "rmodus" / "robot.yaml",
+        Path.home() / "rmodus" / "network.yaml",
+    ]
+
+    # Pokud služba běží pod rootem, prohledáme /home/<user>/...
+    for home_user in sorted(Path("/home").glob("*")):
+        if home_user.is_dir():
+            candidates.append(home_user / "rmodus" / "configs" / "robot.yaml")
+            candidates.append(home_user / "rmodus" / "configs" / "network.yaml")
+            candidates.append(home_user / "rmodus" / "robot.yaml")
+            candidates.append(home_user / "rmodus" / "network.yaml")
+
+    candidates.extend([
+        Path("/etc/rmodus/robot.yaml"),
+        Path("/etc/rmodus/network.yaml"),
+    ])
+
+    for cand in candidates:
+        if cand.is_file():
+            cfg = parse_network_config(cand)
+            if cfg:
+                return cand, cfg
+
+    return None, {}
+
+
+def _ensure_nm() -> bool:
+    if shutil.which("nmcli") is None:
+        _log("CHYBA: nmcli není v PATH (balíček network-manager).")
+        return False
+    state = _nmcli("general", "status", check=False, quiet=True)
+    if state.returncode != 0:
+        _log("NetworkManager neběží, zkouším systemctl start...")
+        _run(["systemctl", "start", "NetworkManager"], check=False)
+        state = _nmcli("general", "status", check=False, quiet=True)
+    if state.returncode != 0:
+        _log("CHYBA: NetworkManager nelze spustit.")
+        if state.stderr:
+            print(state.stderr.strip(), file=sys.stderr)
+        return False
+    return True
+
+
+def _wifi_iface(preferred: str) -> str | None:
+    if preferred:
+        return preferred
+    listing = _nmcli("-t", "-f", "DEVICE,TYPE", "device", "status", check=False, quiet=True)
+    if listing.returncode == 0:
+        for line in listing.stdout.splitlines():
+            if line.endswith(":wifi"):
+                return line.split(":", 1)[0]
+    return None
+
+
+def _unblock_radio(country: str) -> None:
+    _run(["rfkill", "unblock", "wifi"], check=False, quiet=True)
+    _nmcli("radio", "wifi", "on", check=False, quiet=True)
+    if country and shutil.which("iw"):
+        _run(["iw", "reg", "set", country], check=False, quiet=True)
+
+
+def _delete_connection(name: str) -> None:
+    _nmcli("connection", "delete", name, check=False, quiet=True)
+
+
+def _modify_autoconnect(name: str, enabled: bool, priority: int | None = None) -> None:
+    args = ["connection", "modify", name, "connection.autoconnect", "yes" if enabled else "no"]
+    if enabled and priority is not None:
+        args += ["connection.autoconnect-priority", str(priority)]
+    _nmcli(*args, check=False, quiet=True)
+
+
+def _set_psk(name: str, password: str) -> None:
+    result = _nmcli(
+        "connection",
+        "modify",
+        name,
+        "wifi-sec.key-mgmt",
+        "wpa-psk",
+        "wifi-sec.psk",
+        password,
+        check=False,
+    )
+    if result.returncode != 0:
+        _nmcli(
+            "connection",
+            "modify",
+            name,
+            "802-11-wireless-security.key-mgmt",
+            "wpa-psk",
+            "802-11-wireless-security.psk",
+            password,
+            check=False,
+        )
+
+
+def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: int = 30) -> bool:
+    """Nastaví a aktivuje Wi-Fi připojení v režimu Client. Vrací True při úspěchu."""
+    _delete_connection(CLIENT_CON)
+    _modify_autoconnect(AP_CON, False)
+    args = [
+        "connection",
+        "add",
+        "type",
+        "wifi",
+        "ifname",
+        iface,
+        "con-name",
+        CLIENT_CON,
+        "ssid",
+        ssid,
+        "ipv4.method",
+        "auto",
+        "ipv6.method",
+        "auto",
+        "connection.autoconnect",
+        "yes",
+        "connection.autoconnect-priority",
+        "200",
+    ]
+    if hidden:
+        args += ["802-11-wireless.hidden", "yes"]
+    result = _nmcli(*args, check=False)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "nmcli connection add selhalo").strip())
+
+    if password:
+        _set_psk(CLIENT_CON, password)
+    else:
+        _nmcli("connection", "modify", CLIENT_CON, "wifi-sec.key-mgmt", "none", check=False)
+
+    _nmcli("connection", "down", AP_CON, check=False, quiet=True)
+
+    _log(f"client: pokus o připojení k '{ssid}' na {iface} (timeout {timeout}s)...")
+    up_res = _nmcli("-w", str(timeout), "connection", "up", CLIENT_CON, check=False)
+    if up_res.returncode != 0:
+        err = (up_res.stderr or up_res.stdout or "").strip()
+        _log(f"client: připojení k '{ssid}' selhalo (kód {up_res.returncode}): {err}")
+        return False
+
+    _log(f"client: úspěšně připojeno k '{ssid}' na {iface}")
+    return True
+
+
+def apply_ap(iface: str, ssid: str, password: str, address: str) -> None:
+    """Spustí Wi-Fi Access Point (Hotspot)."""
+    if len(password) < 8:
+        raise RuntimeError("AP režim vyžaduje heslo o délce alespoň 8 znaků (WPA2).")
+    _delete_connection(AP_CON)
+    _modify_autoconnect(CLIENT_CON, False)
+    result = _nmcli(
+        "connection",
+        "add",
+        "type",
+        "wifi",
+        "ifname",
+        iface,
+        "con-name",
+        AP_CON,
+        "ssid",
+        ssid,
+        "802-11-wireless.mode",
+        "ap",
+        "802-11-wireless.band",
+        "bg",
+        "ipv4.method",
+        "shared",
+        "ipv4.addresses",
+        address,
+        "ipv6.method",
+        "disabled",
+        "connection.autoconnect",
+        "yes",
+        "connection.autoconnect-priority",
+        "200",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "nmcli connection add (AP) selhalo").strip())
+    _set_psk(AP_CON, password)
+    _nmcli("connection", "down", CLIENT_CON, check=False, quiet=True)
+
+    up_res = _nmcli("connection", "up", AP_CON, check=False)
+    if up_res.returncode != 0:
+        err = (up_res.stderr or up_res.stdout or "").strip()
+        raise RuntimeError(f"nmcli connection up {AP_CON} selhalo: {err}")
+
+    gw = address.split("/", 1)[0]
+    _log(f"ap: hotspot '{ssid}' spuštěn na {iface}, web: http://{gw}:8080")
+
+
+def cmd_apply(config_arg: str | None) -> int:
+    cfg_path, cfg = resolve_config(config_arg)
+    if not cfg or not cfg_path:
+        _log(f"Konfigurace sítě nebyla nalezena (hledáno: {config_arg or 'výchozí cesty'}) - síť neměním.")
+        return 0
+
+    _log(f"Používám konfiguraci: {cfg_path}")
+    mode = str(cfg.get("mode") or "client").strip().lower()
+    ssid = str(cfg.get("ssid") or "").strip()
+    password = str(cfg.get("password") or "")
+    iface_pref = str(cfg.get("iface") or "").strip()
+    country = str(cfg.get("country") or DEFAULT_COUNTRY).strip() or DEFAULT_COUNTRY
+    ap_address = str(cfg.get("ap_address") or DEFAULT_AP_ADDRESS).strip() or DEFAULT_AP_ADDRESS
+    hidden = _as_bool(cfg.get("hidden"))
+
+    fallback_enabled = _as_bool(cfg.get("fallback", True))
+    try:
+        fallback_timeout = int(cfg.get("fallback_timeout") or DEFAULT_FALLBACK_TIMEOUT)
+    except (ValueError, TypeError):
+        fallback_timeout = DEFAULT_FALLBACK_TIMEOUT
+
+    fallback_ssid = str(cfg.get("fallback_ssid") or DEFAULT_FALLBACK_SSID).strip()
+    fallback_password = str(cfg.get("fallback_password") or DEFAULT_FALLBACK_PASSWORD)
+
+    if mode not in ("client", "ap"):
+        _log(f"CHYBA: Neznámý mode '{mode}' (očekávám client|ap)")
+        return 1
+
+    if not _ensure_nm():
+        return 1
+
+    iface = _wifi_iface(iface_pref)
+    if not iface:
+        _log("Žádné Wi-Fi zařízení (nmcli) - síť neměním.")
+        return 0
+
+    _unblock_radio(country)
+
+    try:
+        if mode == "client":
+            connected = False
+            if ssid:
+                connected = apply_client(iface, ssid, password, hidden, timeout=fallback_timeout)
+            else:
+                _log("ssid je prázdné v konfiguraci.")
+
+            if not connected:
+                if fallback_enabled:
+                    _log(f"Aktivuji záchranný Fallback Hotspot (AP) '{fallback_ssid}'...")
+                    apply_ap(iface, fallback_ssid, fallback_password, ap_address)
+                    return 0
+                else:
+                    _log("Fallback je zakázán (fallback=false), síť zůstává nepřipojena.")
+                    return 1 if ssid else 0
+            return 0
+        else:
+            # Režim AP
+            ap_ssid = ssid if ssid else fallback_ssid
+            ap_pass = password if password else fallback_password
+            apply_ap(iface, ap_ssid, ap_pass, ap_address)
+            return 0
+
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        _log(f"CHYBA: {exc}")
+        return 1
+
+
+def cmd_status() -> int:
+    if not _ensure_nm():
+        return 1
+    out = _nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status", check=False)
+    sys.stdout.write(out.stdout)
+    return 0 if out.returncode == 0 else 1
+
+
+def main() -> int:
+    os.environ.setdefault("LC_ALL", "C")
+    parser = argparse.ArgumentParser(description="R-Modus WiFi client/AP")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    apply_p = sub.add_parser("apply", help="nastavit WiFi podle YAML")
+    apply_p.add_argument(
+        "config",
+        nargs="?",
+        default=os.environ.get("RMODUS_NETWORK_CONFIG", ""),
+        help="cesta k robot.yaml nebo network.yaml",
+    )
+    sub.add_parser("status", help="stav NM zařízení")
+    args = parser.parse_args()
+    if args.cmd == "status":
+        return cmd_status()
+    return cmd_apply(args.config if args.config else None)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)

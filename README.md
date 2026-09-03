@@ -10,14 +10,15 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 
 ```
 ~/rmodus/
-  setup/          sw-install (install.py, bootstrap, rmodus_entrypoint.sh, rmodus_ros.env)
+  setup/          sw-install (install.py, bootstrap, rmodus_entrypoint.sh, rmodus_ros.env, network/)
   ros2_ws/        colcon workspace (src/, install/)
-  configs/        vychozi `robot.yaml` (kopie z ros2_ws/.../rmodus_hw/config po klonu, krok **[4d]**)
+  configs/        `robot.yaml` (z sw-nav-module) a `network.yaml` (z sw-install/network; existujici se neprepisuji)
   data/           kopie **`manual.pdf`** z korene sw-install (`setup/manual.pdf`), krok **[0b]**
 ```
 
 - **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
 - **`robot.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`ros2_ws/src/sw_nav_module/rmodus_hw/config/robot.yaml`** (jediny zdroj pravdy je **sw-nav-module**). Pokud cil **`~/rmodus/configs/robot.yaml`** uz existuje, kopie se preskoci. Bez `FETCH_SW_NAV_MODULE` krok **[4d]** vypise VAROVANI.
+- **`network.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`setup/network/network.yaml.example`** (krok **[4e]**). Existujici soubor se neprepisuje. `mode: client|ap`, `ssid`, `password`. Systemd jednotka **`rmodus-network`** se pri instalaci jen **enable** (ne start), aby SSH pres WiFi nespadlo. Aplikace: reboot, nebo `sudo systemctl start rmodus-network`.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 
@@ -38,7 +39,7 @@ Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci
 
 ### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
 
-Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `INSTALL_RMODUS_HW_PIP`, rosdep klice, atd.
+Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `INSTALL_RMODUS_HW_PIP`, rosdep klice, `ENABLE_RMODUS_NETWORK`, atd.
 
 ### Po instalaci
 

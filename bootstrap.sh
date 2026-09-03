@@ -11,10 +11,10 @@ REPO_URL="${RMODUS_REPO_URL:-https://github.com/R-MODUS/sw-install.git}"
 REPO_DIR="${RMODUS_REPO_DIR:-${RMODUS_ROOT}/setup}"
 
 echo "[bootstrap] Strom adresaru:"
-echo "  ${RMODUS_ROOT}/setup     (tento repozitar)"
+echo "  ${RMODUS_ROOT}/setup     (tento repozitar: instalator, network, systemd)"
 echo "  ${RMODUS_ROOT}/ros2_ws   (colcon workspace)"
-echo "  ${RMODUS_ROOT}/configs"
-echo "  ${RMODUS_ROOT}/data"
+echo "  ${RMODUS_ROOT}/configs   (robot.yaml, network.yaml)"
+echo "  ${RMODUS_ROOT}/data      (manual.pdf, data)"
 mkdir -p "${RMODUS_ROOT}/setup" "${RMODUS_ROOT}/ros2_ws/src" "${RMODUS_ROOT}/configs" "${RMODUS_ROOT}/data"
 touch "${RMODUS_ROOT}/configs/.gitkeep" "${RMODUS_ROOT}/data/.gitkeep" 2>/dev/null || true
 

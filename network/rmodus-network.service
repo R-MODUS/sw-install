@@ -1,0 +1,15 @@
+[Unit]
+Description=R-Modus WiFi (client or access point)
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=rmodus.service robot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=90
+ExecStart=/usr/local/sbin/rmodus-network apply __NETWORK_CONFIG__
+ExecReload=/usr/local/sbin/rmodus-network apply __NETWORK_CONFIG__
+
+[Install]
+WantedBy=multi-user.target
