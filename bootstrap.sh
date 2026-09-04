@@ -5,6 +5,8 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 export PYTHONUNBUFFERED=1
+# Ubuntu 24.04+ / PEP 668: rosdep pip install (jako root) vyzaduje --break-system-packages
+export PIP_BREAK_SYSTEM_PACKAGES=1
 
 RMODUS_ROOT="${RMODUS_ROOT:-${HOME}/rmodus}"
 REPO_URL="${RMODUS_REPO_URL:-https://github.com/R-MODUS/sw-install.git}"

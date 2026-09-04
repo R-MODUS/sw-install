@@ -8,20 +8,22 @@
 
 network:
   # Režim připojení:
-  #  - 'client': robot se připojuje k existující Wi-Fi síti
-  #  - 'ap':     robot sám vysílá Wi-Fi Hotspot (Access Point)
+  #  - 'client':    robot se připojuje k existující Wi-Fi síti
+  #  - 'ap':        robot sám vysílá Wi-Fi Hotspot (Access Point)
+  #  - 'ethernet':  Wi-Fi se nespouští (ani fallback AP); rádio se uspí.
+  #                 Síť jde jen přes kabel (DHCP na eth0). Aliasy: none, disabled
   mode: client
 
   # Název a heslo cílové Wi-Fi sítě (pro režim client i ap)
-  ssid: ""
-  password: ""
+  ssid: "R-MODUS"                             # název cílové Wi-Fi sítě
+  password: "rmodus123"                         # heslo cílové Wi-Fi sítě (min. 8 znaků)
 
   # --- Fallback Hotspot (Záchranný AP při nedostupnosti sítě) ---
   # Pokud je režim 'client', ale robot se nedokáže k zadané Wi-Fi připojit
   # (např. robot je v cizím prostředí / škole), automaticky vytvoří Hotspot.
   fallback: true                       # povolit automatický záchranný AP (true/false)
   fallback_timeout: 30                 # čas v sekundách pro pokus o připojení k Wi-Fi
-  fallback_ssid: "R-MODUS-AP"          # název záchranné Wi-Fi sítě
+  fallback_ssid: "R-MODUS-fallback"    # název záchranné Wi-Fi sítě
   fallback_password: "rmodus123"       # heslo záchranné Wi-Fi (min. 8 znaků)
 
   # --- Pokročilá nastavení ---

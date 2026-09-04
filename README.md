@@ -18,7 +18,7 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 
 - **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
 - **`robot.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`ros2_ws/src/sw_nav_module/rmodus_hw/config/robot.yaml`** (jediny zdroj pravdy je **sw-nav-module**). Pokud cil **`~/rmodus/configs/robot.yaml`** uz existuje, kopie se preskoci. Bez `FETCH_SW_NAV_MODULE` krok **[4d]** vypise VAROVANI.
-- **`network.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`setup/network/network.yaml.example`** (krok **[4e]**). Existujici soubor se neprepisuje. `mode: client|ap`, `ssid`, `password`. Systemd jednotka **`rmodus-network`** se pri instalaci jen **enable** (ne start), aby SSH pres WiFi nespadlo. Aplikace: reboot, nebo `sudo systemctl start rmodus-network`.
+- **`network.yaml`** do `~/rmodus/configs/` instalator zkopiuje ze **`setup/network/network.yaml.example`** (krok **[4e]**). Existujici soubor se neprepisuje. `mode: client|ap|ethernet`. Systemd jednotka **`rmodus-network`** se pri instalaci jen **enable** (ne start), aby SSH pres WiFi nespadlo. Zaroven se zapise `/etc/netplan/99-rmodus-nm.yaml` (`renderer: NetworkManager`); `netplan apply` az po rebootu. Prvni SSH: Wi-Fi v Raspberry Pi Imageru; po rebootu plati `network.yaml`. Debug AP raději pres Ethernet.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 

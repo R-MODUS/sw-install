@@ -12,6 +12,7 @@ from typing import Any
 
 CLIENT_CON = "rmodus-wifi-client"
 AP_CON = "rmodus-wifi-ap"
+ETHERNET_MODES = ("ethernet", "none", "disabled")
 DEFAULT_AP_ADDRESS = "192.168.50.1/24"
 DEFAULT_COUNTRY = "CZ"
 DEFAULT_FALLBACK_SSID = "R-MODUS-AP"
@@ -228,6 +229,12 @@ def _unblock_radio(country: str) -> None:
         _run(["iw", "reg", "set", country], check=False, quiet=True)
 
 
+def _prepare_wifi_iface(iface: str) -> None:
+    """Preda wlan NetworkManageru a uvolni radio (Imager/netplan klient jinak blokuje AP)."""
+    _nmcli("device", "set", iface, "managed", "yes", check=False, quiet=True)
+    _nmcli("device", "disconnect", iface, check=False, quiet=True)
+
+
 def _delete_connection(name: str) -> None:
     _nmcli("connection", "delete", name, check=False, quiet=True)
 
@@ -300,8 +307,9 @@ def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: in
 
     _nmcli("connection", "down", AP_CON, check=False, quiet=True)
 
+    _prepare_wifi_iface(iface)
     _log(f"client: pokus o připojení k '{ssid}' na {iface} (timeout {timeout}s)...")
-    up_res = _nmcli("-w", str(timeout), "connection", "up", CLIENT_CON, check=False)
+    up_res = _nmcli("-w", str(timeout), "connection", "up", CLIENT_CON, "ifname", iface, check=False)
     if up_res.returncode != 0:
         err = (up_res.stderr or up_res.stdout or "").strip()
         _log(f"client: připojení k '{ssid}' selhalo (kód {up_res.returncode}): {err}")
@@ -348,14 +356,29 @@ def apply_ap(iface: str, ssid: str, password: str, address: str) -> None:
         raise RuntimeError((result.stderr or result.stdout or "nmcli connection add (AP) selhalo").strip())
     _set_psk(AP_CON, password)
     _nmcli("connection", "down", CLIENT_CON, check=False, quiet=True)
+    _nmcli("connection", "modify", AP_CON, "connection.interface-name", iface, check=False, quiet=True)
 
-    up_res = _nmcli("connection", "up", AP_CON, check=False)
+    _prepare_wifi_iface(iface)
+    up_res = _nmcli("-w", "30", "connection", "up", AP_CON, "ifname", iface, check=False)
     if up_res.returncode != 0:
         err = (up_res.stderr or up_res.stdout or "").strip()
         raise RuntimeError(f"nmcli connection up {AP_CON} selhalo: {err}")
 
     gw = address.split("/", 1)[0]
     _log(f"ap: hotspot '{ssid}' spuštěn na {iface}, web: http://{gw}:8080")
+
+
+def apply_ethernet() -> None:
+    """Nespravuje Wi-Fi: vypne R-Modus profily a rádio, Ethernet nechá systému (DHCP)."""
+    _nmcli("connection", "down", CLIENT_CON, check=False, quiet=True)
+    _nmcli("connection", "down", AP_CON, check=False, quiet=True)
+    _modify_autoconnect(CLIENT_CON, False)
+    _modify_autoconnect(AP_CON, False)
+    _delete_connection(CLIENT_CON)
+    _delete_connection(AP_CON)
+    _nmcli("radio", "wifi", "off", check=False, quiet=True)
+    _run(["rfkill", "block", "wifi"], check=False, quiet=True)
+    _log("ethernet: Wi-Fi klienta/AP nespouštím, rádio uspáno. Použij Ethernet (DHCP).")
 
 
 def cmd_apply(config_arg: str | None) -> int:
@@ -382,9 +405,17 @@ def cmd_apply(config_arg: str | None) -> int:
     fallback_ssid = str(cfg.get("fallback_ssid") or DEFAULT_FALLBACK_SSID).strip()
     fallback_password = str(cfg.get("fallback_password") or DEFAULT_FALLBACK_PASSWORD)
 
-    if mode not in ("client", "ap"):
-        _log(f"CHYBA: Neznámý mode '{mode}' (očekávám client|ap)")
+    if mode not in ("client", "ap") and mode not in ETHERNET_MODES:
+        _log(f"CHYBA: Neznámý mode '{mode}' (očekávám client|ap|ethernet)")
         return 1
+
+    if mode in ETHERNET_MODES:
+        if _ensure_nm():
+            apply_ethernet()
+        else:
+            _run(["rfkill", "block", "wifi"], check=False, quiet=True)
+            _log("ethernet: NetworkManager není, Wi-Fi jen rfkill. Ethernet nechávám systému.")
+        return 0
 
     if not _ensure_nm():
         return 1
@@ -435,9 +466,9 @@ def cmd_status() -> int:
 
 def main() -> int:
     os.environ.setdefault("LC_ALL", "C")
-    parser = argparse.ArgumentParser(description="R-Modus WiFi client/AP")
+    parser = argparse.ArgumentParser(description="R-Modus síť: Wi-Fi client/AP nebo Ethernet")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    apply_p = sub.add_parser("apply", help="nastavit WiFi podle YAML")
+    apply_p = sub.add_parser("apply", help="nastavit síť podle YAML (client/ap/ethernet)")
     apply_p.add_argument(
         "config",
         nargs="?",

@@ -1,6 +1,9 @@
 #!/bin/bash
-set -euo pipefail
 # Sablona v ~/rmodus/setup/; install.py doplni __PLACEHOLDERS__ na miste (jedina kopie, ne v ~/).
+# Poznamka: NEpouzivej "set -u" pred source ROS setup.bash — ament promenne (AMENT_TRACE_*)
+# nejsou vzdy nastavene a nounset jinak shodi systemd sluzbu.
+set -eo pipefail
+
 _RENV="__DEPLOY_PATH__/rmodus_ros.env"
 if [ -f "$_RENV" ]; then
     set -a
@@ -9,8 +12,10 @@ if [ -f "$_RENV" ]; then
     set +a
 fi
 
+# shellcheck source=/dev/null
 source "/opt/ros/__ROS_DISTRO__/setup.bash"
+# shellcheck source=/dev/null
 source "__WS_PATH__/install/setup.bash"
 
-# Upravte nazev launch souboru, pokud se lisi od rmodus_main.launch.py
-#ros2 launch rmodus_hw rmodus_main.launch.py
+# Po bootu: web UI (rmodus_web). Pozdeji: rmodus_bringup robot.launch.py mode:=hw
+exec ros2 launch rmodus_web web.launch.py

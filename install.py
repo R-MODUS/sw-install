@@ -28,6 +28,11 @@ def _force_line_buffered_stdio() -> None:
 
 _force_line_buffered_stdio()
 
+# Ubuntu 24.04+ / Python 3.11+ (PEP 668): rosdep pri pip instalaci jako root
+# prida --break-system-packages, jen kdyz toto vidí ve svem prostredi.
+# (sudo pip samo o sobe env z uzivatele nededi — rosdep preda priznak na CLI.)
+os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+
 
 DEFAULTS: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
@@ -369,6 +374,28 @@ _NETWORK_DEB_PKGS: tuple[str, ...] = (
     "python3-yaml",
 )
 
+_NETPLAN_RMODUS_NM = """\
+network:
+  version: 2
+  renderer: NetworkManager
+"""
+
+
+def _install_netplan_network_manager() -> None:
+    """Ubuntu Raspi/cloud-init pouziva systemd-networkd; NM pak nevidi wlan0 (unavailable)."""
+    path = "/etc/netplan/99-rmodus-nm.yaml"
+    _sudo_write(path, _NETPLAN_RMODUS_NM)
+    _sudo(["chmod", "600", path], check=False)
+    # generate jen overi YAML; apply az po rebootu, at SSH pres Imager Wi-Fi nespadne ted
+    gen = _sudo(["netplan", "generate"], check=False)
+    if gen.returncode == 0:
+        print(f"         netplan: {path} (renderer NetworkManager; apply pri pristi reboot)")
+    else:
+        print(
+            f"         VAROVANI: netplan generate selhal - zkontrolujte {path}",
+            file=sys.stderr,
+        )
+
 
 def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
     script_src = deploy_path / "network" / "rmodus-network"
@@ -384,6 +411,7 @@ def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
     _apt(["install", "-y", *_NETWORK_DEB_PKGS], check=True)
     _sudo(["systemctl", "enable", "NetworkManager"], check=False)
     _sudo(["systemctl", "start", "NetworkManager"], check=False)
+    _install_netplan_network_manager()
     _sudo(["install", "-m", "755", str(script_src), "/usr/local/sbin/rmodus-network"], check=True)
     body = unit_src.read_text(encoding="utf-8").replace("__NETWORK_CONFIG__", str(config_path.resolve()))
     _sudo_write("/etc/systemd/system/rmodus-network.service", body)
@@ -391,6 +419,7 @@ def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
     _sudo(["systemctl", "enable", "rmodus-network.service"], check=True)
     print(f"         sluzba rmodus-network povolena (enable). konfig: {config_path}")
     print("         pri bootu (ne ted, at SSH pres WiFi nespadne): sudo systemctl start rmodus-network")
+    print("         netplan renderer NM: /etc/netplan/99-rmodus-nm.yaml (plati po rebootu)")
 
 
 def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
@@ -812,7 +841,9 @@ def main() -> int:
     ]
     for skip in ("cmake_modules", "ament_python"):
         rosdep_cmd.extend(["--skip-keys", skip])
-    _run(rosdep_cmd, cwd=ws_path, check=True)
+    rosdep_env = os.environ.copy()
+    rosdep_env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+    _run(rosdep_cmd, cwd=ws_path, check=True, env=rosdep_env)
 
     if _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
         print("  (6a2) pip install - rmodus_* s requirements-pip.txt (PEP 668: --user --break-system-packages)")
