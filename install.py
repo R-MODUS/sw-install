@@ -975,6 +975,7 @@ def main() -> int:
     print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
     print("  * Entrypoint:       ~/rmodus/setup/systemd/rmodus_entrypoint.sh")
     print("  * WiFi konfig:      ~/rmodus/configs/current/current.yaml  (blok network:)")
+    print("  * Web UI konfig:    ~/rmodus/configs/current/current.yaml  (blok web:)")
     print("  * Vzor profilu:     ~/rmodus/setup/examples/rmodus-example.yaml")
     print("  * WiFi sluzba:      sudo systemctl start rmodus-network   (nebo reboot)")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")

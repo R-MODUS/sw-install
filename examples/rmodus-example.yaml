@@ -7,20 +7,23 @@
 # Profily:  ~/rmodus/configs/<libovolny-nazev>.yaml
 # Aktivní:  ~/rmodus/configs/current/current.yaml
 #           (vždy kopie zvoleného profilu, ručně se needituje)
+#
+# Bloky:  meta, network, web, /** (hardware / ROS 2)
 # ============================================================
 
 meta:
   source: rmodus-example.yaml      # jméno zdrojového profilu v configs/
-  title: Výchozí profil
+  title: Example Profile
   last_used: ""                    # ISO čas, doplní aktivační skript
   copied_at: ""
+
+# ============================================================
 
 network:
   # Režim připojení:
   #  - 'client':    robot se připojuje k existující Wi-Fi síti
   #  - 'ap':        robot sám vysílá Wi-Fi Hotspot (Access Point)
-  #  - 'ethernet':  Wi-Fi se nespouští (ani fallback AP); rádio se uspí.
-  #                 Síť jde jen přes kabel (DHCP na eth0). Aliasy: none, disabled
+  #  - 'ethernet':  Wi-Fi se nespouští
   mode: client
 
   ssid: "R-MODUS"
@@ -35,6 +38,66 @@ network:
   ap_address: "192.168.50.1/24"    # web v režimu AP: http://192.168.50.1:8080
   country: "CZ"
   ros_domain_id: 0
+
+# ============================================================
+
+web:
+  # true  = vývojový režim (bez přihlašování)
+  testing: true
+
+  # Adresa a port HTTP/WebSocket serveru (uvicorn).
+  # 0.0.0.0 = poslouchá na všech rozhraních (Wi-Fi i Ethernet).
+  # V režimu AP je UI typicky na http://192.168.50.1:8080
+  host: "0.0.0.0"
+  port: 8080
+  log_level: info                  # uvicorn: critical|error|warning|info|debug|trace
+
+  # PIN kódy UI (prostý text v profilu — chraňte práva souboru).
+  # operator = ovládání robota, admin = správa uživatelů / nastavení
+  operator_pin: "1234"
+  admin_pin: "4321"
+
+  tf:
+    # Kořenový rámec 2D stromu TF posílaného do prohlížeče
+    root_frame: base_link
+    # Jak často posílat snímek TF do UI (Hz)
+    broadcast_rate_hz: 5.0
+    # Po této době bez /tf se strom považuje za zastaralý (s)
+    stale_timeout_sec: 3.0
+    # Minimální pauza mezi opětovným přihlášením k /tf při výpadku (s)
+    resubscribe_cooldown_sec: 8.0
+
+  topics:
+    # Topic, které web odebírá / publikuje. Nejsou to HW parametry
+    # z bloku /** — měňte je zde, pokud se liší názvy na robotovi.
+    lidar: /scan
+    imu: /imu/data
+    bumper_prefix: /bumper/        # dynamicky se hledají /bumper/<jméno>
+    cliff_prefix: /cliff/          # dynamicky se hledají /cliff/<jméno>
+    map: /map
+    map_updates: /map_updates
+    plan: /received_global_plan
+    goal_pose: /goal_pose
+    cmd_vel: /cmd_vel              # výstup joysticku z UI
+    # Perioda znovuobjevení bumper/cliff topiců (Hz)
+    discovery_rate_hz: 1.0
+
+  cmd:
+    # false = geometry_msgs/Twist, true = geometry_msgs/TwistStamped
+    # Při TwistStamped se do headeru zapisuje frame_id
+    use_twist_stamped: false
+    frame_id: base_link
+
+  ui:
+    # Viditelnost záložek v menu (true = zobrazit, false = skrýt).
+    nav_tabs:
+      status: true
+      controls: true
+      map: true
+      sensors: true
+      docs: true
+      config: true
+      users: true
 
 # Hardware / ROS 2 (rmodus_hw). Hodnoty jsou vzor — upravte podle konkrétního robota.
 /**:

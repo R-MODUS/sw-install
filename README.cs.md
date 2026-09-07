@@ -17,8 +17,9 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 ```
 
 - **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
-- **`robot.yaml` se nekopiruje.** Vzor celeho profilu je **`setup/examples/rmodus-example.yaml`** (`meta`, `network`, hardware). Profily patri do **`~/rmodus/configs/*.yaml`**; po bootu plati kopie **`~/rmodus/configs/current/current.yaml`** (instalator ji nevytvari).
+- **`robot.yaml` se nekopiruje.** Vzor celeho profilu je **`setup/examples/rmodus-example.yaml`** (`meta`, `network`, `web`, hardware). Profily patri do **`~/rmodus/configs/*.yaml`**; po bootu plati kopie **`~/rmodus/configs/current/current.yaml`** (instalator ji nevytvari).
 - Sit: blok **`network:`** v **`current.yaml`** (`mode: client|ap|ethernet`). Systemd jednotka **`rmodus-network`** se pri instalaci jen **enable** (ne start), aby SSH pres WiFi nespadlo. Zaroven se zapise `/etc/netplan/99-rmodus-nm.yaml` (`renderer: NetworkManager`); `netplan apply` az po rebootu. Prvni SSH: Wi-Fi v Raspberry Pi Imageru. Debug AP raději pres Ethernet.
+- Web UI: blok **`web:`** v **`current.yaml`** (host, port, PIN, topicy, záložky). Čte ho `rmodus_web`; bez bloku platí vestavěné defaulty.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 
