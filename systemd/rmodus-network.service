@@ -7,7 +7,7 @@ Before=rmodus.service robot.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=90
+TimeoutStartSec=180
 ExecStart=/usr/local/sbin/rmodus-network apply __NETWORK_CONFIG__
 ExecReload=/usr/local/sbin/rmodus-network apply __NETWORK_CONFIG__
 

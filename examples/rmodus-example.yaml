@@ -1,0 +1,167 @@
+# ============================================================
+# R-MODUS: vzor profilu robota
+# ============================================================
+# Soubor žije v setup/examples/ — instalátor ho do configs
+# nekopíruje.
+#
+# Profily:  ~/rmodus/configs/<libovolny-nazev>.yaml
+# Aktivní:  ~/rmodus/configs/current/current.yaml
+#           (vždy kopie zvoleného profilu, ručně se needituje)
+# ============================================================
+
+meta:
+  source: rmodus-example.yaml      # jméno zdrojového profilu v configs/
+  title: Výchozí profil
+  last_used: ""                    # ISO čas, doplní aktivační skript
+  copied_at: ""
+
+network:
+  # Režim připojení:
+  #  - 'client':    robot se připojuje k existující Wi-Fi síti
+  #  - 'ap':        robot sám vysílá Wi-Fi Hotspot (Access Point)
+  #  - 'ethernet':  Wi-Fi se nespouští (ani fallback AP); rádio se uspí.
+  #                 Síť jde jen přes kabel (DHCP na eth0). Aliasy: none, disabled
+  mode: client
+
+  ssid: "R-MODUS"
+  password: "rmodus123"            # min. 8 znaků pro WPA2
+
+  fallback: true
+  fallback_timeout: 60
+  fallback_ssid: "R-MODUS-fallback"
+  fallback_password: "rmodus123"
+
+  hidden: false
+  ap_address: "192.168.50.1/24"    # web v režimu AP: http://192.168.50.1:8080
+  country: "CZ"
+  ros_domain_id: 0
+
+# Hardware / ROS 2 (rmodus_hw). Hodnoty jsou vzor — upravte podle konkrétního robota.
+/**:
+  ros__parameters:
+    base_link:
+      mass: 5.0
+      size: [0.5, 0.5, 0.1] # x, y, z
+      offset_z: 0.0973
+
+    nav_module:
+      mass: 2.0
+      size: [0.25, 0.25, 0.05]
+      offset_x: 0.032
+      offset_y: 0.0
+      offset_z: 0.02
+
+    wheel_odom:
+      enabled: true
+      type: "odom"
+      topic: "/odom"
+
+    lidar_odom:
+      enabled: false
+      type: "odom"
+      topic: "/odom_lidar"
+
+    imu:
+      enabled: true
+      type: "imu"
+      name: "imu"
+      topic: "/imu/data"
+      frame_id: "imu_link"
+      mount_parent_frame: "main_module_mount"
+      mount_offset: [0.0, 0.0, 0.0]
+      mount_rpy: [0.0, 0.0, 0.0]
+      offset: [0.056, 0.020, 0.015]
+      rpy: [0.0, 0.0, 0.0]
+
+    lidar:
+      enabled: true
+      name: "lidar"
+      topic: "/scan"
+      frame_id: "lidar_beam"
+      mount_parent_frame: "main_module_mount"
+      mount_offset: [0.0, 0.0, 0.0]
+      mount_rpy: [0.0, 0.0, 0.0]
+      port: "/dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.2:1.0-port0"
+      motor_pin: 19
+      frequency: 10000
+      target_rpm: 300
+      angle_min: 0.0
+      angle_max: 6.28319
+      range_min: 0.1
+      range_max: 10.0
+      fov: 360
+      resolution: 1.0
+      offset: [0.005, 0.0, 0.2]
+      rpy: [0.0, 0.0, 0.0]
+
+    flow_sensor:
+      enabled: true
+      type: "twist"
+      name: "flow_front"
+      topic: "/visual_flow/data"
+      frame_id: "flow_front_link"
+      spi_port: 0
+      spi_cs: 0
+      deadzone: 3
+      timer_period: 0.05
+      z_height: 0.025
+      fov_deg: 42.0
+      res_pix: 35
+      offset: [0.3, 0.0, 0.0] # x, y, z
+      yaw: 0.0
+
+    bumpers:
+      - name: "front"
+        enabled: true
+        pin: 0
+        inverted: false
+        size: [0.02, 0.30, 0.05] # x(depth), y(width), z(height)
+        mount_parent_frame: "base_link"
+        mount_offset: [0.30, 0.0, 0.0]
+        mount_rpy: [0.0, 0.0, 0.0]
+        contact_offset: [0.02, 0.0, -0.025]
+        contact_rpy: [0.0, 0.0, 0.0]
+
+    cliff_sensors:
+      - name: "fl"
+        enabled: true
+        address: "0x48"
+        pin: 0
+        v_points: [0.3, 0.4, 0.8, 1.2, 2.0, 2.5]
+        d_points: [0.20, 0.15, 0.08, 0.05, 0.03, 0.02]
+        size: [0.02, 0.02, 0.02]
+        mount_parent_frame: "base_link"
+        mount_offset: [0.25, 0.20, 0.0]
+        mount_rpy: [0.0, 0.0, 0.0]
+        beam_offset: [0.0, 0.0, -0.01]
+        beam_rpy: [0.0, 1.5708, 0.0]
+
+      - name: "fr"
+        enabled: true
+        address: "0x48"
+        pin: 1
+        v_points: [0.3, 0.4, 0.8, 1.2, 2.0, 2.5]
+        d_points: [0.20, 0.15, 0.08, 0.05, 0.03, 0.02]
+        size: [0.02, 0.02, 0.02]
+        mount_parent_frame: "base_link"
+        mount_offset: [0.25, -0.20, 0.0]
+        mount_rpy: [0.0, 0.0, 0.0]
+        beam_offset: [0.0, 0.0, -0.01]
+        beam_rpy: [0.0, 1.5708, 0.0]
+
+    motors_node:
+      port: "/dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.0:1.0-port0"
+      max_speed: 255
+
+    display:
+      address: "0x3C"
+      width: 128
+      height: 32
+      orientation: 0
+      brightness: 5
+
+    fan:
+      pin: 13
+      frequency: 10
+      min_to_run: 0.25
+      user_power: [0.0, 0.5, 1.0]

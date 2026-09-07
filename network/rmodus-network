@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Aplikuje WiFi rezim z konfigurace (blok 'network:' v robot.yaml nebo network.yaml) pres NetworkManager."""
+"""Aplikuje WiFi rezim z bloku 'network:' v configs/current/current.yaml pres NetworkManager."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ DEFAULT_AP_ADDRESS = "192.168.50.1/24"
 DEFAULT_COUNTRY = "CZ"
 DEFAULT_FALLBACK_SSID = "R-MODUS-AP"
 DEFAULT_FALLBACK_PASSWORD = "rmoduspassword"
-DEFAULT_FALLBACK_TIMEOUT = 30
+DEFAULT_FALLBACK_TIMEOUT = 60
 
 
 def _log(msg: str) -> None:
@@ -67,27 +67,19 @@ def _clean_val(val: str) -> Any:
 
 
 def _extract_network_dict(doc: Any) -> dict[str, Any] | None:
-    if not isinstance(doc, dict):
-        return None
-    # 1. Hledáme sekci 'network:'
-    if "network" in doc and isinstance(doc["network"], dict):
+    if isinstance(doc, dict) and isinstance(doc.get("network"), dict):
         return doc["network"]
-    # 2. Hledáme síťové klíče na nejvyšší úrovni (samostatný network.yaml bez sekce)
-    net_keys = {"mode", "ssid", "password", "ap_address", "fallback", "fallback_timeout", "fallback_ssid"}
-    if any(k in doc for k in net_keys):
-        return doc
     return None
 
 
 def parse_network_config(path: Path) -> dict[str, Any]:
-    """Načte síťovou konfiguraci ze zadaného YAML souboru."""
+    """Načte blok 'network:' z aktivního profilu (current.yaml)."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         _log(f"Nelze přečíst {path}: {exc}")
         return {}
 
-    # Pokus o plnohodnotný PyYAML, pokud je k dispozici
     try:
         import yaml  # type: ignore
 
@@ -100,10 +92,8 @@ def parse_network_config(path: Path) -> dict[str, Any]:
     except Exception as exc:
         _log(f"PyYAML parser selhal pro {path} ({exc}), zkouším vestavěný parser")
 
-    # Vestavěný řádkový fallback parser pro případ, že PyYAML není instalován
     lines = text.splitlines()
     in_network = False
-    found_network = False
     net_dict: dict[str, Any] = {}
 
     for line in lines:
@@ -112,7 +102,6 @@ def parse_network_config(path: Path) -> dict[str, Any]:
             continue
         if stripped == "network:" or stripped.startswith("network:"):
             in_network = True
-            found_network = True
             continue
         if in_network:
             if line.startswith(" ") or line.startswith("\t"):
@@ -120,70 +109,35 @@ def parse_network_config(path: Path) -> dict[str, Any]:
                     k, v = stripped.split(":", 1)
                     net_dict[k.strip()] = _clean_val(v)
             else:
-                # Konec odsazeného bloku network:
                 break
 
-    if found_network and net_dict:
-        return net_dict
-
-    # Pokud blok 'network:' nebyl nalezen, zkusíme top-level řádky (např. starší network.yaml)
-    top_dict: dict[str, Any] = {}
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in stripped:
-            continue
-        k, v = stripped.split(":", 1)
-        top_dict[k.strip()] = _clean_val(v)
-
-    extracted = _extract_network_dict(top_dict)
-    return extracted if extracted is not None else {}
+    return net_dict
 
 
 def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, Any]]:
-    """Vyhledá konfigurační soubor a vrátí dvojici (cesta, síťový slovník)."""
-    # 1. Cesta předaná jako CLI argument
+    """Vyhledá configs/current/current.yaml a vrátí dvojici (cesta, slovník z bloku network:)."""
     if cli_path:
         p = Path(cli_path).expanduser()
         if p.is_file():
-            cfg = parse_network_config(p)
-            if cfg:
-                return p, cfg
-            # Pokud zadaný robot.yaml nemá blok network, zkusíme network.yaml ve stejné složce
-            alt = p.parent / "network.yaml"
-            if alt.is_file():
-                alt_cfg = parse_network_config(alt)
-                if alt_cfg:
-                    return alt, alt_cfg
+            return p, parse_network_config(p)
+        _log(f"Soubor {p} neexistuje.")
+        return p, {}
 
-    # 2. Proměnná prostředí
-    env_p = os.environ.get("RMODUS_CONFIG") or os.environ.get("RMODUS_NETWORK_CONFIG")
+    env_p = os.environ.get("RMODUS_CONFIG")
     if env_p:
         p = Path(env_p).expanduser()
         if p.is_file():
-            cfg = parse_network_config(p)
-            if cfg:
-                return p, cfg
+            return p, parse_network_config(p)
 
-    # 3. Standardní vyhledávací cesty
     candidates: list[Path] = [
-        Path.home() / "rmodus" / "configs" / "robot.yaml",
-        Path.home() / "rmodus" / "configs" / "network.yaml",
-        Path.home() / "rmodus" / "robot.yaml",
-        Path.home() / "rmodus" / "network.yaml",
+        Path.home() / "rmodus" / "configs" / "current" / "current.yaml",
     ]
 
-    # Pokud služba běží pod rootem, prohledáme /home/<user>/...
     for home_user in sorted(Path("/home").glob("*")):
         if home_user.is_dir():
-            candidates.append(home_user / "rmodus" / "configs" / "robot.yaml")
-            candidates.append(home_user / "rmodus" / "configs" / "network.yaml")
-            candidates.append(home_user / "rmodus" / "robot.yaml")
-            candidates.append(home_user / "rmodus" / "network.yaml")
+            candidates.append(home_user / "rmodus" / "configs" / "current" / "current.yaml")
 
-    candidates.extend([
-        Path("/etc/rmodus/robot.yaml"),
-        Path("/etc/rmodus/network.yaml"),
-    ])
+    candidates.append(Path("/etc/rmodus/current/current.yaml"))
 
     for cand in candidates:
         if cand.is_file():
@@ -235,6 +189,33 @@ def _prepare_wifi_iface(iface: str) -> None:
     _nmcli("device", "disconnect", iface, check=False, quiet=True)
 
 
+def _wifi_rescan(iface: str, ssid: str) -> None:
+    """Vynuti sken AP pred connection up (hotspot notebooku jinak casto neni v cache)."""
+    _log(f"client: rescan Wi-Fi na {iface}...")
+    listed = _nmcli(
+        "-t",
+        "-f",
+        "SSID",
+        "device",
+        "wifi",
+        "list",
+        "--rescan",
+        "yes",
+        "ifname",
+        iface,
+        check=False,
+    )
+    if listed.returncode != 0:
+        _nmcli("device", "wifi", "rescan", "ifname", iface, check=False, quiet=True)
+        listed = _nmcli("-t", "-f", "SSID", "device", "wifi", "list", "ifname", iface, check=False)
+
+    visible = {line.strip() for line in (listed.stdout or "").splitlines() if line.strip()}
+    if ssid in visible:
+        _log(f"client: síť '{ssid}' je ve skenu")
+    else:
+        _log(f"client: síť '{ssid}' ve skenu není (přesto zkouším připojení)")
+
+
 def _delete_connection(name: str) -> None:
     _nmcli("connection", "delete", name, check=False, quiet=True)
 
@@ -270,7 +251,7 @@ def _set_psk(name: str, password: str) -> None:
         )
 
 
-def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: int = 30) -> bool:
+def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: int = 60) -> bool:
     """Nastaví a aktivuje Wi-Fi připojení v režimu Client. Vrací True při úspěchu."""
     _delete_connection(CLIENT_CON)
     _modify_autoconnect(AP_CON, False)
@@ -308,6 +289,7 @@ def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: in
     _nmcli("connection", "down", AP_CON, check=False, quiet=True)
 
     _prepare_wifi_iface(iface)
+    _wifi_rescan(iface, ssid)
     _log(f"client: pokus o připojení k '{ssid}' na {iface} (timeout {timeout}s)...")
     up_res = _nmcli("-w", str(timeout), "connection", "up", CLIENT_CON, "ifname", iface, check=False)
     if up_res.returncode != 0:
@@ -384,7 +366,10 @@ def apply_ethernet() -> None:
 def cmd_apply(config_arg: str | None) -> int:
     cfg_path, cfg = resolve_config(config_arg)
     if not cfg or not cfg_path:
-        _log(f"Konfigurace sítě nebyla nalezena (hledáno: {config_arg or 'výchozí cesty'}) - síť neměním.")
+        _log(
+            f"Blok 'network:' v current.yaml nebyl nalezen "
+            f"(hledáno: {cfg_path or config_arg or 'configs/current/current.yaml'}) - síť neměním."
+        )
         return 0
 
     _log(f"Používám konfiguraci: {cfg_path}")
@@ -468,12 +453,12 @@ def main() -> int:
     os.environ.setdefault("LC_ALL", "C")
     parser = argparse.ArgumentParser(description="R-Modus síť: Wi-Fi client/AP nebo Ethernet")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    apply_p = sub.add_parser("apply", help="nastavit síť podle YAML (client/ap/ethernet)")
+    apply_p = sub.add_parser("apply", help="nastavit síť podle bloku network: v current.yaml")
     apply_p.add_argument(
         "config",
         nargs="?",
-        default=os.environ.get("RMODUS_NETWORK_CONFIG", ""),
-        help="cesta k robot.yaml nebo network.yaml",
+        default=os.environ.get("RMODUS_CONFIG", ""),
+        help="cesta k configs/current/current.yaml (blok network:)",
     )
     sub.add_parser("status", help="stav NM zařízení")
     args = parser.parse_args()

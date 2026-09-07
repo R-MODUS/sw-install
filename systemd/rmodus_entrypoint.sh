@@ -1,10 +1,10 @@
 #!/bin/bash
-# Sablona v ~/rmodus/setup/; install.py doplni __PLACEHOLDERS__ na miste (jedina kopie, ne v ~/).
+# Sablona v ~/rmodus/setup/systemd/; install.py doplni __PLACEHOLDERS__ na miste (jedina kopie, ne v ~/).
 # Poznamka: NEpouzivej "set -u" pred source ROS setup.bash — ament promenne (AMENT_TRACE_*)
 # nejsou vzdy nastavene a nounset jinak shodi systemd sluzbu.
 set -eo pipefail
 
-_RENV="__DEPLOY_PATH__/rmodus_ros.env"
+_RENV="__DEPLOY_PATH__/systemd/rmodus_ros.env"
 if [ -f "$_RENV" ]; then
     set -a
     # shellcheck source=/dev/null
