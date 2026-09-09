@@ -79,6 +79,9 @@ web:
     plan: /received_global_plan
     goal_pose: /goal_pose
     cmd_vel: /cmd_vel              # výstup joysticku z UI
+    e_stop_state: /rmodus/e_stop
+    e_stop_request: /rmodus/e_stop/request
+    e_stop_reset: /rmodus/e_stop/reset
     # Perioda znovuobjevení bumper/cliff topiců (Hz)
     discovery_rate_hz: 1.0
 
@@ -99,12 +102,14 @@ web:
       config: true
       users: true
 
-# Hardware / ROS 2 (rmodus_hw). Hodnoty jsou vzor — upravte podle konkrétního robota.
+# Hardware / ROS 2 — volitelné moduly (rmodus_bumper, cliff_sensor, flow_sensor, display, uart_output, estop).
+# Lidar/IMU: jen kontrakt (topic + TF); driver řeší uživatel.
+# E-stop: rmodus_estop latch + gate; bumper/cliff/web jen posílají request/reset.
 /**:
   ros__parameters:
     base_link:
       mass: 5.0
-      size: [0.5, 0.5, 0.1] # x, y, z
+      size: [0.5, 0.5, 0.1]
       offset_z: 0.0973
 
     nav_module:
@@ -127,7 +132,6 @@ web:
     imu:
       enabled: true
       type: "imu"
-      name: "imu"
       topic: "/imu/data"
       frame_id: "imu_link"
       mount_parent_frame: "main_module_mount"
@@ -138,31 +142,42 @@ web:
 
     lidar:
       enabled: true
-      name: "lidar"
       topic: "/scan"
       frame_id: "lidar_beam"
       mount_parent_frame: "main_module_mount"
       mount_offset: [0.0, 0.0, 0.0]
       mount_rpy: [0.0, 0.0, 0.0]
-      port: "/dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.2:1.0-port0"
-      motor_pin: 19
-      frequency: 10000
-      target_rpm: 300
-      angle_min: 0.0
-      angle_max: 6.28319
-      range_min: 0.1
-      range_max: 10.0
-      fov: 360
-      resolution: 1.0
       offset: [0.005, 0.0, 0.2]
       rpy: [0.0, 0.0, 0.0]
+
+    uart_output:
+      enabled: true
+      port: "/dev/ttyUSB0"
+      baudrate: 115200
+      cmd_vel_topic: "/cmd_vel_safe"
+
+    rmodus_estop:
+      enabled: true
+      publish_rate_hz: 50.0
+      cmd_vel_input_topic: /cmd_vel
+      cmd_vel_output_topic: /cmd_vel_safe
+      state_topic: /rmodus/e_stop
+      request_topic: /rmodus/e_stop/request
+      reset_topic: /rmodus/e_stop/reset
+      gpio_button:
+        enabled: false
+        pin: 16
+      platform:
+        enabled: false
 
     flow_sensor:
       enabled: true
       type: "twist"
-      name: "flow_front"
       topic: "/visual_flow/data"
       frame_id: "flow_front_link"
+      mount_parent_frame: "base_link"
+      mount_offset: [0.3, 0.0, 0.0]
+      mount_rpy: [0.0, 0.0, 0.0]
       spi_port: 0
       spi_cs: 0
       deadzone: 3
@@ -170,61 +185,75 @@ web:
       z_height: 0.025
       fov_deg: 42.0
       res_pix: 35
-      offset: [0.3, 0.0, 0.0] # x, y, z
-      yaw: 0.0
 
     bumpers:
-      - name: "front"
+      enabled: true
+      publish_rate_hz: 50.0
+      mcp_address: "0x20"
+      corner_pin_indices: [0, 1, 2, 3]
+      estop_request:
         enabled: true
-        pin: 0
-        inverted: false
-        size: [0.02, 0.30, 0.05] # x(depth), y(width), z(height)
-        mount_parent_frame: "base_link"
-        mount_offset: [0.30, 0.0, 0.0]
-        mount_rpy: [0.0, 0.0, 0.0]
-        contact_offset: [0.02, 0.0, -0.025]
-        contact_rpy: [0.0, 0.0, 0.0]
+        request_topic: /rmodus/e_stop/request
+        retrigger_while_contact: false
+      items:
+        - name: "front"
+          enabled: true
+          topic: "/bumper/front"
+          frame_id: "bumper_front_contact"
+          mount_parent_frame: "base_link"
+          mount_offset: [0.30, 0.0, 0.0]
+          mount_rpy: [0.0, 0.0, 0.0]
+          size: [0.02, 0.30, 0.05]
+          contact_offset: [0.02, 0.0, -0.025]
+          contact_rpy: [0.0, 0.0, 0.0]
 
     cliff_sensors:
-      - name: "fl"
+      enabled: true
+      address: "0x48"
+      estop_request:
         enabled: true
-        address: "0x48"
-        pin: 0
-        v_points: [0.3, 0.4, 0.8, 1.2, 2.0, 2.5]
-        d_points: [0.20, 0.15, 0.08, 0.05, 0.03, 0.02]
-        size: [0.02, 0.02, 0.02]
-        mount_parent_frame: "base_link"
-        mount_offset: [0.25, 0.20, 0.0]
-        mount_rpy: [0.0, 0.0, 0.0]
-        beam_offset: [0.0, 0.0, -0.01]
-        beam_rpy: [0.0, 1.5708, 0.0]
-
-      - name: "fr"
-        enabled: true
-        address: "0x48"
-        pin: 1
-        v_points: [0.3, 0.4, 0.8, 1.2, 2.0, 2.5]
-        d_points: [0.20, 0.15, 0.08, 0.05, 0.03, 0.02]
-        size: [0.02, 0.02, 0.02]
-        mount_parent_frame: "base_link"
-        mount_offset: [0.25, -0.20, 0.0]
-        mount_rpy: [0.0, 0.0, 0.0]
-        beam_offset: [0.0, 0.0, -0.01]
-        beam_rpy: [0.0, 1.5708, 0.0]
-
-    motors_node:
-      port: "/dev/serial/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.0:1.0-port0"
-      max_speed: 255
+        request_topic: /rmodus/e_stop/request
+        cliff_range_threshold_m: 0.12
+        retrigger_while_cliff: false
+      items:
+        - name: "fl"
+          enabled: true
+          topic: "/cliff/fl"
+          frame_id: "cliff_sensor_fl_beam"
+          pin: 0
+          mount_parent_frame: "base_link"
+          mount_offset: [0.25, 0.20, 0.0]
+          mount_rpy: [0.0, 0.0, 0.0]
+          size: [0.02, 0.02, 0.02]
+          beam_offset: [0.0, 0.0, -0.01]
+          beam_rpy: [0.0, 1.5708, 0.0]
+        - name: "fr"
+          enabled: true
+          topic: "/cliff/fr"
+          frame_id: "cliff_sensor_fr_beam"
+          pin: 1
+          mount_parent_frame: "base_link"
+          mount_offset: [0.25, -0.20, 0.0]
+          mount_rpy: [0.0, 0.0, 0.0]
+          size: [0.02, 0.02, 0.02]
+          beam_offset: [0.0, 0.0, -0.01]
+          beam_rpy: [0.0, 1.5708, 0.0]
 
     display:
+      enabled: true
       address: "0x3C"
       width: 128
       height: 32
       orientation: 0
       brightness: 5
+      frame_id: "display_link"
+      mount_parent_frame: "main_module_mount"
+      mount_offset: [0.0, 0.0, 0.0]
+      mount_rpy: [0.0, 0.0, 0.0]
 
     fan:
-      pin: 13
+      enabled: true
+      fan_pin: 13
       frequency: 10
       min_to_run: 0.25
       user_power: [0.0, 0.5, 1.0]

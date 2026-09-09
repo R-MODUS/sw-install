@@ -40,7 +40,7 @@ DEFAULTS: dict[str, str] = {
     "WS_PATH": str(Path.home() / "rmodus" / "ros2_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus" / "setup"),
     "FETCH_SW_NAV_MODULE": "1",
-    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description", #rmodus_autonomy
+    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display neato_lidar", #rmodus_autonomy
     "SW_NAV_BRANCH": "dev",
     "FETCH_XSENS_DRIVER": "0",
     "BUILD_XSPUBLIC": "1",
