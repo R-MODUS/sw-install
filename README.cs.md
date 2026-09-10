@@ -10,16 +10,23 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 
 ```
 ~/rmodus/
-  setup/          sw-install (`install.py`, `examples/`, `network/`, `systemd/`)
+  setup/          sw-install (`install.py`, `examples/`, `network/`, `systemd/`, `config/`)
   ros2_ws/        colcon workspace (src/, install/)
-  configs/        profily `*.yaml`; aktivni kopie `current/current.yaml` (vzor: `setup/examples/rmodus-example.yaml`)
+  configs/
+    profiles/     robot profily `*.yaml` (vzor: `setup/examples/rmodus-example.yaml`)
+    active        jméno aktivního profilu (po install: `rmodus-example`)
+    network.yaml  Wi-Fi (vzor: `setup/examples/rmodus-network.example.yaml`, chmod 600)
   data/           kopie **`manual.pdf`** z korene sw-install (`setup/manual.pdf`), krok **[0b]**
 ```
 
 - **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
-- **`robot.yaml` se nekopiruje.** Vzor celeho profilu je **`setup/examples/rmodus-example.yaml`** (`meta`, `network`, `web`, hardware). Profily patri do **`~/rmodus/configs/*.yaml`**; po bootu plati kopie **`~/rmodus/configs/current/current.yaml`** (instalator ji nevytvari).
-- Sit: blok **`network:`** v **`current.yaml`** (`mode: client|ap|ethernet`). Systemd jednotka **`rmodus-network`** se pri instalaci jen **enable** (ne start), aby SSH pres WiFi nespadlo. Zaroven se zapise `/etc/netplan/99-rmodus-nm.yaml` (`renderer: NetworkManager`); `netplan apply` az po rebootu. Prvni SSH: Wi-Fi v Raspberry Pi Imageru. Debug AP raději pres Ethernet.
-- Web UI: blok **`web:`** v **`current.yaml`** (host, port, PIN, topicy, záložky). Čte ho `rmodus_web`; bez bloku platí vestavěné defaulty.
+- **Robot profil:** `profiles/<name>.yaml` + ukazatel **`active`**. Install nakopiruje example jen pokud soubor jeste neexistuje — **reinstall neprepisuje zadne profily ani active/network.yaml**.
+- **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` + `/**` musi sedet s example profilem.
+- **Sit:** samostatny **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** jen enable (ne start). Netplan `99-rmodus-nm.yaml`; apply po rebootu.
+- **`boot.rmodus`** v robot profilu; **`boot.network`** v network.yaml. `false` = no-op pri startu.
+- **`rmodus.service`** → aktivni profil: `ros2 launch rmodus_bringup … robot_yaml:=profiles/<active>.yaml`.
+- CLI: **`rmodus-config list|activate|path`** (`/usr/local/sbin`); ROS: balicek **`rmodus_config`**.
+- Web UI: blok **`web:`** v aktivnim robot profilu.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
 
@@ -40,7 +47,9 @@ Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci
 
 ### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
 
-Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `INSTALL_RMODUS_HW_PIP`, rosdep klice, `ENABLE_RMODUS_NETWORK`, atd.
+Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
+`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`, atd.
+Lidar/IMU drivery (Neato, Xsens, …) install netaha — resit mimo / podle potreby.
 
 ### Po instalaci
 

@@ -1,64 +1,29 @@
 # ============================================================
-# R-MODUS: vzor profilu robota
+# R-MODUS: vzor robot profilu (bez Wi-Fi secretů)
 # ============================================================
-# Soubor žije v setup/examples/ — instalátor ho do configs
-# nekopíruje.
+# Po instalaci: ~/rmodus/configs/profiles/rmodus-example.yaml
+# Aktivní jméno: ~/rmodus/configs/active  (např. rmodus-example)
+# Síť zvlášť:   ~/rmodus/configs/network.yaml
 #
-# Profily:  ~/rmodus/configs/<libovolny-nazev>.yaml
-# Aktivní:  ~/rmodus/configs/current/current.yaml
-#           (vždy kopie zvoleného profilu, ručně se needituje)
+# Bloky:  meta, boot, web, bringup, /** (hardware / ROS 2)
 #
-# Bloky:  meta, network, web, /** (hardware / ROS 2)
+# bringup: + /** musí sedět s:
+#   rmodus_bringup/config/rmodus.yaml
 # ============================================================
 
 meta:
-  source: rmodus-example.yaml      # jméno zdrojového profilu v configs/
+  source: rmodus-example
   title: Example Profile
-  last_used: ""                    # ISO čas, doplní aktivační skript
+  last_used: ""
   copied_at: ""
 
 # ============================================================
+# rmodus.service — false = entrypoint skončí bez bringupu
+# (síť: boot.network v network.yaml)
+# ============================================================
 
-network:
-  # Režim připojení:
-  #  - 'client':    robot se připojuje k existující Wi-Fi síti
-  #  - 'ap':        robot sám vysílá Wi-Fi Hotspot (Access Point)
-  #  - 'ethernet':  Wi-Fi se nespouští
-  mode: client
-
-  # mode: client — pořadí = priorita (zkouší se shora dolů, neomezený počet).
-  # mode: ap — tento seznam se ignoruje; hotspot bere blok ap: níže.
-  # hidden: true u položky = cílová síť nevysílá SSID (cloaked).
-  networks:
-    - ssid: "R-MODUS"
-      password: "rmodus123"        # min. 8 znaků pro WPA2
-    # - ssid: "Office-5G"
-    #   password: "secret"
-    # - ssid: "Hidden-Net"
-    #   password: "secret"
-    #   hidden: true
-
-  # mode: ap — parametry hotspotu (také výchozí adresa pro fallback_ap).
-  # Legacy: top-level ssid/password/ap_address stále fungují.
-  # hidden: true = nevysílat SSID (připojení z mobilu jen ručním zadáním názvu).
-  ap:
-    ssid: "R-MODUS"
-    password: "rmodus123"          # min. 8 znaků pro WPA2
-    address: "192.168.50.1/24"     # web: http://192.168.50.1:8080
-    hidden: false
-
-  # mode: client — záchranný hotspot, když žádná síť z networks: nejde připojit.
-  # Legacy: fallback / fallback_timeout / fallback_ssid / fallback_password.
-  fallback_ap:
-    enabled: true
-    timeout: 60                    # timeout na jednu síť z networks:
-    ssid: "R-MODUS-fallback"
-    password: "rmodus123"
-    hidden: false
-    # address: "192.168.50.1/24"   # volitelně; jinak bere ap.address
-
-  country: "CZ"                    # regulační doména (client i ap)
-  ros_domain_id: 0
+boot:
+  rmodus: true
 
 # ============================================================
 
@@ -66,54 +31,39 @@ web:
   # true  = vývojový režim (bez přihlašování)
   testing: true
 
-  # Adresa a port HTTP/WebSocket serveru (uvicorn).
-  # 0.0.0.0 = poslouchá na všech rozhraních (Wi-Fi i Ethernet).
-  # V režimu AP je UI typicky na http://192.168.50.1:8080
   host: "0.0.0.0"
   port: 8080
-  log_level: info                  # uvicorn: critical|error|warning|info|debug|trace
+  log_level: info
 
-  # PIN kódy UI (prostý text v profilu — chraňte práva souboru).
-  # operator = ovládání robota, admin = správa uživatelů / nastavení
   operator_pin: "1234"
   admin_pin: "4321"
 
   tf:
-    # Kořenový rámec 2D stromu TF posílaného do prohlížeče
     root_frame: base_link
-    # Jak často posílat snímek TF do UI (Hz)
     broadcast_rate_hz: 5.0
-    # Po této době bez /tf se strom považuje za zastaralý (s)
     stale_timeout_sec: 3.0
-    # Minimální pauza mezi opětovným přihlášením k /tf při výpadku (s)
     resubscribe_cooldown_sec: 8.0
 
   topics:
-    # Topic, které web odebírá / publikuje. Nejsou to HW parametry
-    # z bloku /** — měňte je zde, pokud se liší názvy na robotovi.
     lidar: /scan
     imu: /imu/data
-    bumper_prefix: /bumper/        # dynamicky se hledají /bumper/<jméno>
-    cliff_prefix: /cliff/          # dynamicky se hledají /cliff/<jméno>
+    bumper_prefix: /bumper/
+    cliff_prefix: /cliff/
     map: /map
     map_updates: /map_updates
     plan: /received_global_plan
     goal_pose: /goal_pose
-    cmd_vel: /cmd_vel              # výstup joysticku z UI
+    cmd_vel: /cmd_vel
     e_stop_state: /rmodus/e_stop
     e_stop_request: /rmodus/e_stop/request
     e_stop_reset: /rmodus/e_stop/reset
-    # Perioda znovuobjevení bumper/cliff topiců (Hz)
     discovery_rate_hz: 1.0
 
   cmd:
-    # false = geometry_msgs/Twist, true = geometry_msgs/TwistStamped
-    # Při TwistStamped se do headeru zapisuje frame_id
     use_twist_stamped: false
     frame_id: base_link
 
   ui:
-    # Viditelnost záložek v menu (true = zobrazit, false = skrýt).
     nav_tabs:
       status: true
       controls: true
@@ -123,17 +73,38 @@ web:
       config: true
       users: true
 
-# Hardware / ROS 2 — volitelné moduly (rmodus_bumper, cliff_sensor, flow_sensor, display, uart_output, estop).
-# Lidar/IMU: jen kontrakt (topic + TF); driver řeší uživatel.
-# E-stop: rmodus_estop latch + gate; bumper/cliff/web jen posílají request/reset.
+# ============================================================
+# Níže: stejné jako rmodus_bringup/config/rmodus.yaml
+# ============================================================
+
+bringup:
+  chassis: true
+  description: true
+  hw: true
+  uart_output: true
+  estop: true
+  bumper: true
+  cliff: true
+  flow: true
+  display: true
+  web: true
+  rviz: false
+  sim: false
+  localization: true
+  navigation: true
+  slam: true
+  rf2o: false
+  obstacle_cloud: true
+
 /**:
   ros__parameters:
+
     base_link:
       mass: 5.0
       size: [0.5, 0.5, 0.1]
       offset_z: 0.0973
 
-    nav_module:
+    rmodus_module:
       mass: 2.0
       size: [0.25, 0.25, 0.05]
       offset_x: 0.032
@@ -142,20 +113,20 @@ web:
 
     wheel_odom:
       enabled: true
-      type: "odom"
-      topic: "/odom"
+      type: 'odom'
+      topic: '/odom'
 
     lidar_odom:
       enabled: false
-      type: "odom"
-      topic: "/odom_lidar"
+      type: 'odom'
+      topic: '/odom_lidar'
 
     imu:
       enabled: true
-      type: "imu"
-      topic: "/imu/data"
-      frame_id: "imu_link"
-      mount_parent_frame: "main_module_mount"
+      type: 'imu'
+      topic: '/imu/data'
+      frame_id: 'imu_link'
+      mount_parent_frame: 'rmodus_mount'
       mount_offset: [0.0, 0.0, 0.0]
       mount_rpy: [0.0, 0.0, 0.0]
       offset: [0.056, 0.020, 0.015]
@@ -163,9 +134,9 @@ web:
 
     lidar:
       enabled: true
-      topic: "/scan"
-      frame_id: "lidar_beam"
-      mount_parent_frame: "main_module_mount"
+      topic: '/scan'
+      frame_id: 'lidar_beam'
+      mount_parent_frame: 'rmodus_mount'
       mount_offset: [0.0, 0.0, 0.0]
       mount_rpy: [0.0, 0.0, 0.0]
       offset: [0.005, 0.0, 0.2]
@@ -173,9 +144,9 @@ web:
 
     uart_output:
       enabled: true
-      port: "/dev/ttyUSB0"
+      port: '/dev/ttyUSB0'
       baudrate: 115200
-      cmd_vel_topic: "/cmd_vel_safe"
+      cmd_vel_topic: '/cmd_vel_safe'
 
     rmodus_estop:
       enabled: true
@@ -194,10 +165,10 @@ web:
 
     flow_sensor:
       enabled: true
-      type: "twist"
-      topic: "/visual_flow/data"
-      frame_id: "flow_front_link"
-      mount_parent_frame: "base_link"
+      type: 'twist'
+      topic: '/visual_flow/data'
+      frame_id: 'flow_front_link'
+      mount_parent_frame: 'base_link'
       mount_offset: [0.3, 0.0, 0.0]
       mount_rpy: [0.0, 0.0, 0.0]
       spi_port: 0
@@ -211,18 +182,18 @@ web:
     bumpers:
       enabled: true
       publish_rate_hz: 50.0
-      mcp_address: "0x20"
+      mcp_address: '0x20'
       corner_pin_indices: [0, 1, 2, 3]
       estop_request:
         enabled: true
         request_topic: /rmodus/e_stop/request
         retrigger_while_contact: false
       items:
-        - name: "front"
+        - name: 'front'
           enabled: true
-          topic: "/bumper/front"
-          frame_id: "bumper_front_contact"
-          mount_parent_frame: "base_link"
+          topic: '/bumper/front'
+          frame_id: 'bumper_front_contact'
+          mount_parent_frame: 'base_link'
           mount_offset: [0.30, 0.0, 0.0]
           mount_rpy: [0.0, 0.0, 0.0]
           size: [0.02, 0.30, 0.05]
@@ -231,30 +202,30 @@ web:
 
     cliff_sensors:
       enabled: true
-      address: "0x48"
+      address: '0x48'
       estop_request:
         enabled: true
         request_topic: /rmodus/e_stop/request
         cliff_range_threshold_m: 0.12
         retrigger_while_cliff: false
       items:
-        - name: "fl"
+        - name: 'fl'
           enabled: true
-          topic: "/cliff/fl"
-          frame_id: "cliff_sensor_fl_beam"
+          topic: '/cliff/fl'
+          frame_id: 'cliff_sensor_fl_beam'
           pin: 0
-          mount_parent_frame: "base_link"
+          mount_parent_frame: 'base_link'
           mount_offset: [0.25, 0.20, 0.0]
           mount_rpy: [0.0, 0.0, 0.0]
           size: [0.02, 0.02, 0.02]
           beam_offset: [0.0, 0.0, -0.01]
           beam_rpy: [0.0, 1.5708, 0.0]
-        - name: "fr"
+        - name: 'fr'
           enabled: true
-          topic: "/cliff/fr"
-          frame_id: "cliff_sensor_fr_beam"
+          topic: '/cliff/fr'
+          frame_id: 'cliff_sensor_fr_beam'
           pin: 1
-          mount_parent_frame: "base_link"
+          mount_parent_frame: 'base_link'
           mount_offset: [0.25, -0.20, 0.0]
           mount_rpy: [0.0, 0.0, 0.0]
           size: [0.02, 0.02, 0.02]
@@ -263,13 +234,13 @@ web:
 
     display:
       enabled: true
-      address: "0x3C"
+      address: '0x3C'
       width: 128
       height: 32
       orientation: 0
       brightness: 5
-      frame_id: "display_link"
-      mount_parent_frame: "main_module_mount"
+      frame_id: 'display_link'
+      mount_parent_frame: 'rmodus_mount'
       mount_offset: [0.0, 0.0, 0.0]
       mount_rpy: [0.0, 0.0, 0.0]
 

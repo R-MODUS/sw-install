@@ -1,0 +1,46 @@
+# ============================================================
+# R-MODUS: síť (odděleně od robot profilu)
+# ============================================================
+# Po instalaci: ~/rmodus/configs/network.yaml (chmod 600)
+# Instalátor nepřepisuje existující soubor.
+#
+# Čte: rmodus-network.service → rmodus-network apply
+# ============================================================
+
+boot:
+  network: true    # false = apply při startu nic neudělá
+
+network:
+  # Režim připojení:
+  #  - 'client':    robot se připojuje k existující Wi-Fi síti
+  #  - 'ap':        robot sám vysílá Wi-Fi Hotspot (Access Point)
+  #  - 'ethernet':  Wi-Fi se nespouští
+  mode: client
+
+  # mode: client — pořadí = priorita (zkouší se shora dolů).
+  # mode: ap — tento seznam se ignoruje; hotspot bere blok ap: níže.
+  # hidden: true = cílová síť nevysílá SSID.
+  networks:
+    - ssid: "R-MODUS"
+      password: "rmodus123"        # min. 8 znaků pro WPA2
+    # - ssid: "Office-5G"
+    #   password: "secret"
+    # - ssid: "Hidden-Net"
+    #   password: "secret"
+    #   hidden: true
+
+  ap:
+    ssid: "R-MODUS"
+    password: "rmodus123"
+    address: "192.168.50.1/24"     # web: http://192.168.50.1:8080
+    hidden: false
+
+  fallback_ap:
+    enabled: true
+    timeout: 60
+    ssid: "R-MODUS-fallback"
+    password: "rmodus123"
+    hidden: false
+
+  country: "CZ"
+  ros_domain_id: 0

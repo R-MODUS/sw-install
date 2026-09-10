@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Aplikuje WiFi rezim z bloku 'network:' v configs/current/current.yaml pres NetworkManager."""
+"""Aplikuje WiFi rezim z bloku 'network:' v configs/network.yaml pres NetworkManager."""
 from __future__ import annotations
 
 import argparse
@@ -190,7 +190,7 @@ def _parse_network_fallback(text: str) -> dict[str, Any]:
 
 
 def parse_network_config(path: Path) -> dict[str, Any]:
-    """Načte blok 'network:' z aktivního profilu (current.yaml)."""
+    """Načte blok 'network:' z network.yaml (nebo legacy monolitického profilu)."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -210,6 +210,70 @@ def parse_network_config(path: Path) -> dict[str, Any]:
         _log(f"PyYAML parser selhal pro {path} ({exc}), zkouším vestavěný parser")
 
     return _parse_network_fallback(text)
+
+
+def _parse_boot_fallback(text: str) -> dict[str, bool]:
+    """Vestavěný parser top-level boot: {network, rmodus} (default true)."""
+    out = {"network": True, "rmodus": True}
+    in_boot = False
+    boot_indent = 0
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        stripped = raw.strip()
+        if stripped.startswith("boot:") or stripped == "boot:":
+            in_boot = True
+            boot_indent = indent
+            continue
+        if not in_boot:
+            continue
+        if indent <= boot_indent and ":" in stripped:
+            in_boot = False
+            continue
+        if indent <= boot_indent:
+            continue
+        if ":" not in stripped:
+            continue
+        key, _, rest = stripped.partition(":")
+        key = key.strip()
+        if key not in out:
+            continue
+        val = rest.split("#", 1)[0].strip()
+        if val:
+            out[key] = _as_bool(val)
+    return out
+
+
+def parse_boot_config(path: Path) -> dict[str, bool]:
+    """Načte blok 'boot:' — network/rmodus (chybí-li, obojí true)."""
+    defaults = {"network": True, "rmodus": True}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _log(f"Nelze přečíst {path}: {exc}")
+        return defaults
+
+    try:
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(text)
+        if isinstance(loaded, dict):
+            boot = loaded.get("boot")
+            if isinstance(boot, dict):
+                out = dict(defaults)
+                if "network" in boot:
+                    out["network"] = _as_bool(boot.get("network"))
+                if "rmodus" in boot:
+                    out["rmodus"] = _as_bool(boot.get("rmodus"))
+                return out
+            return defaults
+    except ImportError:
+        pass
+    except Exception as exc:
+        _log(f"PyYAML boot parser selhal pro {path} ({exc}), zkouším vestavěný parser")
+
+    return _parse_boot_fallback(text)
 
 
 def _normalize_wifi_entry(entry: Any, *, default_hidden: bool = False) -> dict[str, Any] | None:
@@ -314,7 +378,7 @@ def resolve_fallback_ap_settings(cfg: dict[str, Any], *, default_address: str) -
 
 
 def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, Any]]:
-    """Vyhledá configs/current/current.yaml a vrátí dvojici (cesta, slovník z bloku network:)."""
+    """Vyhledá network.yaml a vrátí (cesta, slovník z bloku network:)."""
     if cli_path:
         p = Path(cli_path).expanduser()
         if p.is_file():
@@ -322,20 +386,24 @@ def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, 
         _log(f"Soubor {p} neexistuje.")
         return p, {}
 
-    env_p = os.environ.get("RMODUS_CONFIG")
+    env_p = os.environ.get("RMODUS_NETWORK_CONFIG") or os.environ.get("RMODUS_CONFIG")
     if env_p:
         p = Path(env_p).expanduser()
         if p.is_file():
             return p, parse_network_config(p)
 
     candidates: list[Path] = [
+        Path.home() / "rmodus" / "configs" / "network.yaml",
+        # legacy monolith profile (pre split)
         Path.home() / "rmodus" / "configs" / "current" / "current.yaml",
     ]
 
     for home_user in sorted(Path("/home").glob("*")):
         if home_user.is_dir():
+            candidates.append(home_user / "rmodus" / "configs" / "network.yaml")
             candidates.append(home_user / "rmodus" / "configs" / "current" / "current.yaml")
 
+    candidates.append(Path("/etc/rmodus/network.yaml"))
     candidates.append(Path("/etc/rmodus/current/current.yaml"))
 
     for cand in candidates:
@@ -345,6 +413,33 @@ def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, 
                 return cand, cfg
 
     return None, {}
+
+
+def resolve_robot_profile_for_boot() -> Path | None:
+    """Aktivní robot profil (profiles/ + active) pro boot.rmodus check."""
+    lib = Path("/usr/local/lib/rmodus")
+    if lib.is_dir() and str(lib) not in sys.path:
+        sys.path.insert(0, str(lib))
+    try:
+        from rmodus_profiles import ConfigPaths, resolve_active_profile
+
+        return resolve_active_profile(ConfigPaths.from_root())
+    except Exception:
+        pass
+
+    root = Path.home() / "rmodus" / "configs"
+    active_file = root / "active"
+    if not active_file.is_file():
+        legacy = root / "current" / "current.yaml"
+        return legacy if legacy.is_file() else None
+    try:
+        name = active_file.read_text(encoding="utf-8").strip().splitlines()[0].split("#", 1)[0].strip()
+        if name.endswith(".yaml"):
+            name = name[: -len(".yaml")]
+        path = root / "profiles" / f"{name}.yaml"
+        return path if path.is_file() else None
+    except OSError:
+        return None
 
 
 def _ensure_nm() -> bool:
@@ -565,13 +660,59 @@ def apply_ethernet() -> None:
     _log("ethernet: Wi-Fi klienta/AP nespouštím, rádio uspáno. Použij Ethernet (DHCP).")
 
 
+def cmd_boot_check(key: str, config_arg: str | None) -> int:
+    """Exit 0 = spustit, 10 = boot.<key> vypnuto. key: network|rmodus."""
+    key = (key or "").strip().lower()
+    if key not in ("network", "rmodus"):
+        _log(f"CHYBA: boot-check očekává network|rmodus, dostal '{key}'")
+        return 1
+
+    if key == "network":
+        cfg_path, _ = resolve_config(config_arg)
+        if not cfg_path or not cfg_path.is_file():
+            _log(
+                f"boot-check: chybí network.yaml "
+                f"({cfg_path or config_arg or '~/rmodus/configs/network.yaml'}) - beru boot.network=true"
+            )
+            return 0
+        boot = parse_boot_config(cfg_path)
+        enabled = boot.get("network", True)
+        if enabled:
+            return 0
+        _log(f"boot.network=false v {cfg_path} - přeskočeno")
+        return 10
+
+    # rmodus → aktivní robot profil
+    if config_arg:
+        cfg_path = Path(config_arg).expanduser()
+    else:
+        cfg_path = resolve_robot_profile_for_boot()
+    if not cfg_path or not cfg_path.is_file():
+        _log(
+            "boot-check: chybí aktivní robot profil "
+            "(configs/active + profiles/) - beru boot.rmodus=true"
+        )
+        return 0
+    boot = parse_boot_config(cfg_path)
+    enabled = boot.get("rmodus", True)
+    if enabled:
+        return 0
+    _log(f"boot.rmodus=false v {cfg_path} - přeskočeno")
+    return 10
+
+
 def cmd_apply(config_arg: str | None) -> int:
     cfg_path, cfg = resolve_config(config_arg)
     if not cfg or not cfg_path:
         _log(
-            f"Blok 'network:' v current.yaml nebyl nalezen "
-            f"(hledáno: {cfg_path or config_arg or 'configs/current/current.yaml'}) - síť neměním."
+            f"Blok 'network:' v network.yaml nebyl nalezen "
+            f"(hledáno: {cfg_path or config_arg or '~/rmodus/configs/network.yaml'}) - síť neměním."
         )
+        return 0
+
+    boot = parse_boot_config(cfg_path)
+    if not boot.get("network", True):
+        _log(f"boot.network=false v {cfg_path} - síť neměním")
         return 0
 
     _log(f"Používám konfiguraci: {cfg_path}")
@@ -663,17 +804,30 @@ def main() -> int:
     os.environ.setdefault("LC_ALL", "C")
     parser = argparse.ArgumentParser(description="R-Modus síť: Wi-Fi client/AP nebo Ethernet")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    apply_p = sub.add_parser("apply", help="nastavit síť podle bloku network: v current.yaml")
+    apply_p = sub.add_parser("apply", help="nastavit síť podle network.yaml (blok network:)")
     apply_p.add_argument(
         "config",
         nargs="?",
-        default=os.environ.get("RMODUS_CONFIG", ""),
-        help="cesta k configs/current/current.yaml (blok network:)",
+        default=os.environ.get("RMODUS_NETWORK_CONFIG") or os.environ.get("RMODUS_CONFIG", ""),
+        help="cesta k network.yaml",
+    )
+    boot_p = sub.add_parser(
+        "boot-check",
+        help="exit 0 pokud boot.<key> povoleno, 10 pokud vypnuto (network|rmodus)",
+    )
+    boot_p.add_argument("key", choices=("network", "rmodus"))
+    boot_p.add_argument(
+        "config",
+        nargs="?",
+        default="",
+        help="network.yaml (pro network) nebo robot profil (pro rmodus); prázdné = auto",
     )
     sub.add_parser("status", help="stav NM zařízení")
     args = parser.parse_args()
     if args.cmd == "status":
         return cmd_status()
+    if args.cmd == "boot-check":
+        return cmd_boot_check(args.key, args.config if args.config else None)
     return cmd_apply(args.config if args.config else None)
 
 

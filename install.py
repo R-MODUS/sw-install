@@ -40,11 +40,11 @@ DEFAULTS: dict[str, str] = {
     "WS_PATH": str(Path.home() / "rmodus" / "ros2_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus" / "setup"),
     "FETCH_SW_NAV_MODULE": "1",
-    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display neato_lidar", #rmodus_autonomy
+    # Jádro R-MODUS (+ localization/navigation až je stáhneš přes conf / později profil).
+    # Lidar/IMU drivery (neato, xsens, …) sem nepatří — mimo bringup / optional.
+    "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display rmodus_config rmodus_bringup rmodus_chassis rmodus_localization rmodus_navigation",
     "SW_NAV_BRANCH": "dev",
-    "FETCH_XSENS_DRIVER": "0",
-    "BUILD_XSPUBLIC": "1",
-    "INSTALL_XSENS_UDEV": "1",
+    # Volitelný third-party odom (default off). Později: dle profilu / optional_depend.
     "FETCH_RF2O": "0",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
@@ -267,24 +267,6 @@ def _sparse_clone_fix_missing(snav: Path, dirs: list[str]) -> None:
         _run(["git", "-C", str(snav), "sparse-checkout", "set", *dirs], check=True)
 
 
-def _sparse_clone_nested_folder(url: str, branch: str, target_dir: Path, folder: str) -> None:
-    folder = folder.rstrip("/")
-    print(f"    [git sparse] {folder}/ -> {target_dir.name}")
-    if (target_dir / ".git").is_dir():
-        print(f"         (slozka uz existuje - preskoceno; pro cisty stav smazte {target_dir})")
-        return
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
-    if "/" in folder:
-        _run(["git", "clone", "--depth", "1", "-b", branch, url, str(target_dir)], check=True)
-        _run(["git", "-C", str(target_dir), "sparse-checkout", "init", "--no-cone"], check=True)
-        _run(["git", "-C", str(target_dir), "sparse-checkout", "set", folder], check=True)
-    else:
-        _run(["git", "clone", "--depth", "1", "-b", branch, "--sparse", url, str(target_dir)], check=True)
-        _run(["git", "-C", str(target_dir), "sparse-checkout", "set", folder], check=True)
-
-
 def _bash_script(script: str, *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     merged = os.environ.copy()
     if env:
@@ -304,14 +286,14 @@ def _resolve_rmodus_paths(c: dict[str, str]) -> tuple[Path, Path, Path]:
 
 
 def _ensure_rmodus_directory_layout(root: Path, deploy: Path, ws: Path) -> None:
-    """~/rmodus/{setup,ros2_ws,configs,configs/current,data} pred zbytkem instalace."""
+    """~/rmodus/{setup,ros2_ws,configs/profiles,data} pred zbytkem instalace."""
     for d in (
         root,
         deploy,
         ws,
         ws / "src",
         root / "configs",
-        root / "configs" / "current",
+        root / "configs" / "profiles",
         root / "data",
     ):
         d.mkdir(parents=True, exist_ok=True)
@@ -331,10 +313,7 @@ def _copy_if_missing(src: Path, dst: Path, *, label: str) -> None:
         print(f"         VAROVANI: chybi zdroj ({label}): {src}", file=sys.stderr)
         return
     if dst.exists():
-        print(
-            f"         VAROVANI: cil uz existuje, preskakuji kopii: {dst}",
-            file=sys.stderr,
-        )
+        print(f"         zachovano (uz existuje): {dst}")
         return
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -349,6 +328,75 @@ def _seed_rmodus_manual_from_setup(deploy_path: Path, rmodus_root: Path) -> None
     src = deploy_path / _RMODUS_MANUAL_PDF
     dst = rmodus_root / "data" / _RMODUS_MANUAL_PDF
     _copy_if_missing(src, dst, label="manual.pdf")
+
+
+def _seed_rmodus_configs(deploy_path: Path, rmodus_root: Path) -> tuple[Path, Path]:
+    """
+    profiles/ + active + network.yaml.
+    Nikdy nepřepisuje existující profil, active ani network.yaml (reinstall zachová vše).
+    """
+    configs = rmodus_root / "configs"
+    profiles = configs / "profiles"
+    profiles.mkdir(parents=True, exist_ok=True)
+    active_file = configs / "active"
+    network_yaml = configs / "network.yaml"
+
+    example_robot = deploy_path / "examples" / "rmodus-example.yaml"
+    example_net = deploy_path / "examples" / "rmodus-network.example.yaml"
+    dest_profile = profiles / "rmodus-example.yaml"
+
+    if example_robot.is_file():
+        _copy_if_missing(example_robot, dest_profile, label="rmodus-example.yaml")
+    else:
+        print(f"         VAROVANI: chybi vzor {example_robot}", file=sys.stderr)
+
+    # Legacy: current/current.yaml → profiles/legacy-current.yaml (jen pokud cíl chybí)
+    legacy = configs / "current" / "current.yaml"
+    legacy_dest = profiles / "legacy-current.yaml"
+    if legacy.is_file():
+        _copy_if_missing(legacy, legacy_dest, label="legacy current.yaml")
+
+    if not active_file.exists():
+        name = ""
+        if dest_profile.is_file():
+            name = "rmodus-example"
+        elif legacy_dest.is_file():
+            name = "legacy-current"
+        if name:
+            active_file.write_text(name + "\n", encoding="utf-8")
+            print(f"         active -> {name} ({active_file})")
+        else:
+            print("         VAROVANI: nelze nastavit active (chybi profil)", file=sys.stderr)
+    else:
+        print(f"         active zachovan: {active_file}")
+
+    if example_net.is_file():
+        _copy_if_missing(example_net, network_yaml, label="network.yaml")
+        if network_yaml.is_file():
+            try:
+                os.chmod(network_yaml, 0o600)
+            except OSError:
+                pass
+    else:
+        print(f"         VAROVANI: chybi vzor {example_net}", file=sys.stderr)
+
+    return active_file, network_yaml
+
+
+def _install_rmodus_config_cli(deploy_path: Path) -> None:
+    """Standalone CLI + lib (bez ROS) pro systemd / SSH."""
+    lib_src = deploy_path / "config" / "rmodus_profiles.py"
+    cli_src = deploy_path / "config" / "rmodus-config"
+    if not lib_src.is_file() or not cli_src.is_file():
+        print(
+            f"         VAROVANI: chybi {lib_src.name} nebo {cli_src.name}",
+            file=sys.stderr,
+        )
+        return
+    _sudo(["mkdir", "-p", "/usr/local/lib/rmodus"], check=True)
+    _sudo(["install", "-m", "644", str(lib_src), "/usr/local/lib/rmodus/rmodus_profiles.py"], check=True)
+    _sudo(["install", "-m", "755", str(cli_src), "/usr/local/sbin/rmodus-config"], check=True)
+    print("         /usr/local/sbin/rmodus-config + /usr/local/lib/rmodus/rmodus_profiles.py")
 
 
 _NETWORK_DEB_PKGS: tuple[str, ...] = (
@@ -467,7 +515,9 @@ def _postinstall_verify_ros_sourced(ros_distro: str, ws_path: Path, ros_env: Pat
     print("         overeni: ros2 CLI OK (ros2 -h)")
 
 
-def _render_entrypoint_in_setup(deploy_path: Path, ros_distro: str, ws_path: Path) -> Path:
+def _render_entrypoint_in_setup(
+    deploy_path: Path, ros_distro: str, ws_path: Path, configs_root: Path
+) -> Path:
     """Jedina kopie entrypointu: deploy_path/systemd/rmodus_entrypoint.sh (sablona z gitu doplnena na miste)."""
     ep = deploy_path / "systemd" / "rmodus_entrypoint.sh"
     if not ep.is_file():
@@ -476,6 +526,7 @@ def _render_entrypoint_in_setup(deploy_path: Path, ros_distro: str, ws_path: Pat
     body = body.replace("__DEPLOY_PATH__", str(deploy_path.resolve()))
     body = body.replace("__ROS_DISTRO__", ros_distro)
     body = body.replace("__WS_PATH__", str(ws_path.resolve()))
+    body = body.replace("__CONFIGS_ROOT__", str(configs_root.resolve()))
     ep.write_text(body, encoding="utf-8")
     os.chmod(ep, 0o755)
     return ep.resolve()
@@ -616,11 +667,11 @@ def main() -> int:
     c["WS_PATH"] = str(ws_path)
 
     ros_distro = c["ROS_DISTRO"]
-    xsens_ws_dir = ws_path / "src" / "xsens_mti_driver"
     rf2o_dir = ws_path / "src" / "rf2o_laser_odometry"
     snav_dir = ws_path / "src" / "sw_nav_module"
     sw_nav_dirs = c["SW_NAV_SPARSE_DIRS"].split()
-    current_yaml = rmodus_root / "configs" / "current" / "current.yaml"
+    network_yaml = rmodus_root / "configs" / "network.yaml"
+    configs_root = rmodus_root / "configs"
 
     user = getpass.getuser()
     home = Path.home()
@@ -631,19 +682,21 @@ def main() -> int:
     print(f"  {rmodus_root}/")
     print(f"    setup/     (sw-install: install.py, examples/, network/, systemd/)")
     print(f"    ros2_ws/   (colcon workspace, src/)")
-    print(f"    configs/   (profily *.yaml + current/current.yaml)")
+    print(f"    configs/   (profiles/, active, network.yaml)")
     print(f"    data/      (kopie {_RMODUS_MANUAL_PDF} z korene sw-install)")
     print("")
     _banner(f"[0b] Manual: setup/{_RMODUS_MANUAL_PDF} -> ~/rmodus/data/")
     _seed_rmodus_manual_from_setup(deploy_path, rmodus_root)
+    print("")
+    _banner("[0c] Configs: profiles + active + network.yaml (existujici se neprepisuji)")
+    _seed_rmodus_configs(deploy_path, rmodus_root)
+    _install_rmodus_config_cli(deploy_path)
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
     print(
-        f"  Xsens:  FETCH={c['FETCH_XSENS_DRIVER']}  xspublic={c['BUILD_XSPUBLIC']}  udev={c['INSTALL_XSENS_UDEV']}"
-    )
-    print(
-        f"  rf2o:   FETCH={c['FETCH_RF2O']}  samostatna faze buildu={c['BUILD_RF2O_SEPARATE_PHASE']}"
+        f"  rf2o:   FETCH={c['FETCH_RF2O']}  (volitelne; default 0) "
+        f"samostatna faze={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
     print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
@@ -712,19 +765,8 @@ def main() -> int:
     else:
         print("  (4a) sw-nav-module - preskoceno (FETCH_SW_NAV_MODULE=0)")
 
-    if _as_bool(c["FETCH_XSENS_DRIVER"]):
-        print("  (4b) Xsens MTi ROS2 driver (vetev ros2)")
-        _sparse_clone_nested_folder(
-            "https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git",
-            "ros2",
-            xsens_ws_dir,
-            "src/xsens_mti_ros2_driver/",
-        )
-    else:
-        print("  (4b) Xsens driver - preskoceno (FETCH_XSENS_DRIVER=0)")
-
     if _as_bool(c["FETCH_RF2O"]):
-        print("  (4c) rf2o_laser_odometry (vetev ros2)")
+        print("  (4b) rf2o_laser_odometry (volitelne, vetev ros2)")
         if not (rf2o_dir / ".git").is_dir():
             if rf2o_dir.exists():
                 shutil.rmtree(rf2o_dir)
@@ -743,32 +785,12 @@ def main() -> int:
                 check=True,
             )
     else:
-        print("  (4c) rf2o - preskoceno (FETCH_RF2O=0)")
+        print("  (4b) rf2o - preskoceno (FETCH_RF2O=0; optional feature)")
 
     print("")
-    _banner("[4d] Adresar configs/current (aktivni profil)")
-    current_dir = current_yaml.parent
-    current_dir.mkdir(parents=True, exist_ok=True)
-    example = deploy_path / "examples" / "rmodus-example.yaml"
-    print(f"         {current_dir} (current.yaml sem kopiruje aktivacni skript, instalator ho nevytvari)")
-    if example.is_file():
-        print(f"         vzor profilu: {example}")
-    else:
-        print(f"         VAROVANI: chybi vzor {example}", file=sys.stderr)
-
-    # [5]
-    print("")
-    _banner("[5] Xsens xspublic - make v lib/xspublic")
-    xspublic_dir = xsens_ws_dir / "src" / "xsens_mti_ros2_driver" / "lib" / "xspublic"
-    if _as_bool(c["FETCH_XSENS_DRIVER"]) and _as_bool(c["BUILD_XSPUBLIC"]):
-        if xspublic_dir.is_dir():
-            _run(["make"], cwd=xspublic_dir, check=True)
-        else:
-            print("         (xspublic nenalezen - preskoceno)")
-    else:
-        print(
-            f"         (preskoceno: FETCH_XSENS_DRIVER={c['FETCH_XSENS_DRIVER']}, BUILD_XSPUBLIC={c['BUILD_XSPUBLIC']})"
-        )
+    _banner("[4c] Configs profiles/active/network (bez prepsani existujicich)")
+    _seed_rmodus_configs(deploy_path, rmodus_root)
+    _install_rmodus_config_cli(deploy_path)
 
     if not _find_package_xml_under(ws_path / "src"):
         print(
@@ -910,41 +932,23 @@ def main() -> int:
     else:
         print(f"         uzivatel {user} pridan do: dialout (skupina plugdev na systemu neni)")
     print("         -> Skupiny plati po novem prihlaseni nebo: newgrp dialout")
-    print("         -> LiDAR musi byt pripojeny; port nemusi byt ttyUSB0 (viz ls nize).")
+    print("         -> Seriovy HW musi byt pripojeny (ls /dev/ttyUSB* /dev/ttyACM*).")
 
     # [9a]
     print("")
-    _banner("[9a] udev - pravidla pro Xsens MTi (99-xsens-mti.rules)")
-    udev_src = xsens_ws_dir / "src" / "xsens_mti_ros2_driver" / "resources"
-    if _as_bool(c["INSTALL_XSENS_UDEV"]) and udev_src.is_dir():
-        rules = udev_src / "99-xsens-mti.rules"
-        if rules.is_file():
-            _sudo(["cp", str(rules), "/etc/udev/rules.d/"], check=True)
-            _sudo(["udevadm", "control", "--reload-rules"], check=True)
-            _sudo(["udevadm", "trigger"], check=True)
-            print("         Pravidla zkopirovana a udev znovu nacten.")
-        else:
-            print("         Soubor 99-xsens-mti.rules nenalezen - preskoceno.")
-    elif not _as_bool(c["INSTALL_XSENS_UDEV"]):
-        print("         Preskoceno (INSTALL_XSENS_UDEV=0).")
-    else:
-        print("         Adresar resources/ nenalezen - preskoceno (chybi Xsens driver ve src?).")
-
-    # [9b]
-    print("")
-    _banner("[9b] systemd - rmodus-network.service (WiFi client/AP, enable bez startu)")
+    _banner("[9a] systemd - rmodus-network.service (WiFi client/AP, enable bez startu)")
     if _as_bool(c["ENABLE_RMODUS_NETWORK"]):
-        _install_rmodus_network(deploy_path, current_yaml)
+        _install_rmodus_network(deploy_path, network_yaml)
     else:
         print("         Preskoceno (ENABLE_RMODUS_NETWORK=0).")
 
-    # [9c]
+    # [9b]
     print("")
-    _banner("[9c] systemd - jednotka rmodus.service (enable)")
+    _banner("[9b] systemd - jednotka rmodus.service (enable)")
     svc_src = deploy_path / "systemd" / "rmodus.service"
     ep_tpl = deploy_path / "systemd" / "rmodus_entrypoint.sh"
     if _as_bool(c["ENABLE_SYSTEMD_RMODUS"]) and svc_src.is_file() and ep_tpl.is_file():
-        entry_path = _render_entrypoint_in_setup(deploy_path, ros_distro, ws_path)
+        entry_path = _render_entrypoint_in_setup(deploy_path, ros_distro, ws_path, configs_root)
         print(f"         entrypoint: {entry_path}")
         stale_home_ep = home / "rmodus_entrypoint.sh"
         if stale_home_ep.is_file() and stale_home_ep.resolve() != entry_path:
@@ -974,10 +978,14 @@ def main() -> int:
     _banner("HOTOVE")
     print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
     print("  * Entrypoint:       ~/rmodus/setup/systemd/rmodus_entrypoint.sh")
-    print("  * WiFi konfig:      ~/rmodus/configs/current/current.yaml  (blok network:)")
-    print("  * Web UI konfig:    ~/rmodus/configs/current/current.yaml  (blok web:)")
-    print("  * Vzor profilu:     ~/rmodus/setup/examples/rmodus-example.yaml")
+    print("  * Profily:          ~/rmodus/configs/profiles/*.yaml")
+    print("  * Active:           ~/rmodus/configs/active  (rmodus-config activate <name>)")
+    print("  * Sit:              ~/rmodus/configs/network.yaml")
+    print("  * Vzor robot:       ~/rmodus/setup/examples/rmodus-example.yaml")
+    print("  * Vzor sit:         ~/rmodus/setup/examples/rmodus-network.example.yaml")
     print("  * WiFi sluzba:      sudo systemctl start rmodus-network   (nebo reboot)")
+    print("  * ROS bringup:      sudo systemctl start rmodus")
+    print("                      (robot_yaml:= aktivni profil z profiles/)")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
     print("  * ROS v SSH shellu: source ~/.bashrc")
     print("  * Overeni:          ros2 doctor")

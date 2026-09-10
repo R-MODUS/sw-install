@@ -1,5 +1,5 @@
 [Unit]
-Description=Rmodus Launch
+Description=R-MODUS bringup (aktivni profil z configs/profiles)
 After=network.target rmodus-network.service
 Wants=rmodus-network.service
 
