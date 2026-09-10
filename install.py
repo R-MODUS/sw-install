@@ -958,6 +958,22 @@ def main() -> int:
         _sudo(["systemctl", "daemon-reload"], check=True)
         _sudo(["systemctl", "enable", "rmodus.service"], check=True)
         print("         Sluzba rmodus povolena (enable). Start: sudo systemctl start rmodus")
+
+        # Passwordless restart for web UI / rmodus_config (/rmodus/system/restart)
+        sudoers = (
+            f"# R-MODUS: web UI / config_manager muze restartovat bringup\n"
+            f"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart rmodus, "
+            f"/usr/bin/systemctl restart rmodus.service, "
+            f"/usr/bin/systemctl cat rmodus.service, "
+            f"/usr/bin/systemctl status rmodus.service\n"
+        )
+        _sudo_write("/etc/sudoers.d/rmodus-restart", sudoers)
+        _sudo(["chmod", "440", "/etc/sudoers.d/rmodus-restart"], check=True)
+        visudo = _sudo(["visudo", "-cf", "/etc/sudoers.d/rmodus-restart"], check=False)
+        if visudo.returncode != 0:
+            print("         VAROVANI: visudo -cf rmodus-restart selhal", file=sys.stderr)
+        else:
+            print(f"         sudoers: {user} → systemctl restart rmodus (NOPASSWD)")
     elif not _as_bool(c["ENABLE_SYSTEMD_RMODUS"]):
         print("         Preskoceno (ENABLE_SYSTEMD_RMODUS=0).")
     else:
