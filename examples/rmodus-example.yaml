@@ -26,17 +26,38 @@ network:
   #  - 'ethernet':  Wi-Fi se nespouští
   mode: client
 
-  ssid: "R-MODUS"
-  password: "rmodus123"            # min. 8 znaků pro WPA2
+  # mode: client — pořadí = priorita (zkouší se shora dolů, neomezený počet).
+  # mode: ap — tento seznam se ignoruje; hotspot bere blok ap: níže.
+  # hidden: true u položky = cílová síť nevysílá SSID (cloaked).
+  networks:
+    - ssid: "R-MODUS"
+      password: "rmodus123"        # min. 8 znaků pro WPA2
+    # - ssid: "Office-5G"
+    #   password: "secret"
+    # - ssid: "Hidden-Net"
+    #   password: "secret"
+    #   hidden: true
 
-  fallback: true
-  fallback_timeout: 60
-  fallback_ssid: "R-MODUS-fallback"
-  fallback_password: "rmodus123"
+  # mode: ap — parametry hotspotu (také výchozí adresa pro fallback_ap).
+  # Legacy: top-level ssid/password/ap_address stále fungují.
+  # hidden: true = nevysílat SSID (připojení z mobilu jen ručním zadáním názvu).
+  ap:
+    ssid: "R-MODUS"
+    password: "rmodus123"          # min. 8 znaků pro WPA2
+    address: "192.168.50.1/24"     # web: http://192.168.50.1:8080
+    hidden: false
 
-  hidden: false
-  ap_address: "192.168.50.1/24"    # web v režimu AP: http://192.168.50.1:8080
-  country: "CZ"
+  # mode: client — záchranný hotspot, když žádná síť z networks: nejde připojit.
+  # Legacy: fallback / fallback_timeout / fallback_ssid / fallback_password.
+  fallback_ap:
+    enabled: true
+    timeout: 60                    # timeout na jednu síť z networks:
+    ssid: "R-MODUS-fallback"
+    password: "rmodus123"
+    hidden: false
+    # address: "192.168.50.1/24"   # volitelně; jinak bere ap.address
+
+  country: "CZ"                    # regulační doména (client i ap)
   ros_domain_id: 0
 
 # ============================================================

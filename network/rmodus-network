@@ -66,10 +66,127 @@ def _clean_val(val: str) -> Any:
     return val
 
 
+def _strip_inline_comment(val: str) -> str:
+    """Odřízne # komentář mimo uvozovky."""
+    in_single = False
+    in_double = False
+    for i, ch in enumerate(val):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            return val[:i].rstrip()
+    return val
+
+
 def _extract_network_dict(doc: Any) -> dict[str, Any] | None:
     if isinstance(doc, dict) and isinstance(doc.get("network"), dict):
         return doc["network"]
     return None
+
+
+def _indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _parse_kv(stripped: str) -> tuple[str, Any]:
+    k, v = stripped.split(":", 1)
+    return k.strip(), _clean_val(_strip_inline_comment(v))
+
+
+def _parse_network_fallback(text: str) -> dict[str, Any]:
+    """Jednoduchý parser bloku network: včetně networks:, ap:, fallback_ap: (bez PyYAML)."""
+    lines = text.splitlines()
+    in_network = False
+    network_indent: int | None = None
+    net_dict: dict[str, Any] = {}
+    in_networks = False
+    networks_indent = 0
+    networks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    nested_key: str | None = None
+    nested_indent = 0
+    nested_maps: dict[str, dict[str, Any]] = {}
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if not in_network:
+            if stripped == "network:" or stripped.startswith("network:"):
+                in_network = True
+                network_indent = None
+            continue
+
+        if not (line.startswith(" ") or line.startswith("\t")):
+            break
+
+        indent = _indent_width(line)
+        if network_indent is None:
+            network_indent = indent
+        elif indent < network_indent:
+            break
+
+        if in_networks:
+            if indent <= networks_indent:
+                in_networks = False
+                current = None
+            else:
+                if stripped.startswith("- "):
+                    current = {}
+                    networks.append(current)
+                    rest = stripped[2:].strip()
+                    if ":" in rest:
+                        k, v = _parse_kv(rest)
+                        current[k] = v
+                    continue
+                if current is not None and ":" in stripped:
+                    k, v = _parse_kv(stripped)
+                    current[k] = v
+                continue
+
+        if nested_key is not None:
+            if indent <= nested_indent:
+                nested_key = None
+            else:
+                if ":" in stripped:
+                    k, v = _parse_kv(stripped)
+                    nested_maps[nested_key][k] = v
+                continue
+
+        if stripped == "networks:" or stripped.startswith("networks:"):
+            in_networks = True
+            networks_indent = indent
+            current = None
+            after = _strip_inline_comment(stripped.split(":", 1)[1]).strip()
+            if after and after != "[]":
+                _log("networks: očekávám seznam položek (- ssid: ...), inline hodnotu ignoruji")
+            continue
+
+        key_name = stripped.split(":", 1)[0].strip()
+        if key_name in ("ap", "fallback_ap") and (
+            stripped == f"{key_name}:" or stripped.startswith(f"{key_name}:")
+        ):
+            nested_key = key_name
+            nested_indent = indent
+            nested_maps.setdefault(key_name, {})
+            after = _strip_inline_comment(stripped.split(":", 1)[1]).strip()
+            if after and after != "{}":
+                _log(f"{key_name}: očekávám vnořený blok, inline hodnotu ignoruji")
+            continue
+
+        if ":" in stripped:
+            k, v = _parse_kv(stripped)
+            net_dict[k] = v
+
+    if networks:
+        net_dict["networks"] = networks
+    for key, mapping in nested_maps.items():
+        if mapping:
+            net_dict[key] = mapping
+    return net_dict
 
 
 def parse_network_config(path: Path) -> dict[str, Any]:
@@ -92,26 +209,108 @@ def parse_network_config(path: Path) -> dict[str, Any]:
     except Exception as exc:
         _log(f"PyYAML parser selhal pro {path} ({exc}), zkouším vestavěný parser")
 
-    lines = text.splitlines()
-    in_network = False
-    net_dict: dict[str, Any] = {}
+    return _parse_network_fallback(text)
 
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped == "network:" or stripped.startswith("network:"):
-            in_network = True
-            continue
-        if in_network:
-            if line.startswith(" ") or line.startswith("\t"):
-                if ":" in stripped:
-                    k, v = stripped.split(":", 1)
-                    net_dict[k.strip()] = _clean_val(v)
-            else:
-                break
 
-    return net_dict
+def _normalize_wifi_entry(entry: Any, *, default_hidden: bool = False) -> dict[str, Any] | None:
+    """Převede položku sítě na {ssid, password, hidden}. Neplatné přeskočí."""
+    if not isinstance(entry, dict):
+        return None
+    ssid = str(entry.get("ssid") or "").strip()
+    if not ssid:
+        return None
+    password = str(entry.get("password") or "")
+    if "hidden" in entry:
+        hidden = _as_bool(entry.get("hidden"))
+    else:
+        hidden = default_hidden
+    return {"ssid": ssid, "password": password, "hidden": hidden}
+
+
+def resolve_client_networks(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Seznam Wi-Fi sítí pro mode: client.
+    Pořadí v 'networks:' = priorita. hidden jen u položky (ne top-level).
+    Legacy top-level ssid/password(/hidden) jen když networks chybí/je prázdný.
+    """
+    raw = cfg.get("networks")
+    entries: list[dict[str, Any]] = []
+
+    if isinstance(raw, list) and raw:
+        for i, item in enumerate(raw):
+            normalized = _normalize_wifi_entry(item, default_hidden=False)
+            if normalized is None:
+                _log(f"networks[{i}]: přeskočeno (chybí ssid nebo neplatný tvar)")
+                continue
+            entries.append(normalized)
+        return entries
+
+    legacy = _normalize_wifi_entry(
+        {"ssid": cfg.get("ssid"), "password": cfg.get("password"), "hidden": cfg.get("hidden")},
+        default_hidden=False,
+    )
+    return [legacy] if legacy else []
+
+
+def resolve_ap_settings(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parametry hotspotu: preferuje network.ap:{ssid,password,address,hidden}.
+    Legacy: top-level ssid/password/ap_address.
+    """
+    ap = cfg.get("ap") if isinstance(cfg.get("ap"), dict) else {}
+    ssid = str(ap.get("ssid") or cfg.get("ssid") or "").strip()
+    if "password" in ap:
+        password = str(ap.get("password") or "")
+    else:
+        password = str(cfg.get("password") or "")
+    address = (
+        str(ap.get("address") or ap.get("ap_address") or cfg.get("ap_address") or DEFAULT_AP_ADDRESS).strip()
+        or DEFAULT_AP_ADDRESS
+    )
+    hidden = _as_bool(ap.get("hidden")) if "hidden" in ap else False
+    return {"ssid": ssid, "password": password, "address": address, "hidden": hidden}
+
+
+def resolve_fallback_ap_settings(cfg: dict[str, Any], *, default_address: str) -> dict[str, Any]:
+    """
+    Záchranný hotspot po neúspěchu client sítí.
+    Preferuje network.fallback_ap:{enabled,timeout,ssid,password,address,hidden}.
+    Legacy: fallback / fallback_timeout / fallback_ssid / fallback_password.
+    """
+    block = cfg.get("fallback_ap") if isinstance(cfg.get("fallback_ap"), dict) else {}
+
+    if "enabled" in block:
+        enabled = _as_bool(block.get("enabled"))
+    elif "fallback" in cfg:
+        enabled = _as_bool(cfg.get("fallback"))
+    else:
+        enabled = True
+
+    raw_timeout = block.get("timeout", cfg.get("fallback_timeout", DEFAULT_FALLBACK_TIMEOUT))
+    try:
+        timeout = int(raw_timeout if raw_timeout is not None else DEFAULT_FALLBACK_TIMEOUT)
+    except (ValueError, TypeError):
+        timeout = DEFAULT_FALLBACK_TIMEOUT
+
+    ssid = str(block.get("ssid") or cfg.get("fallback_ssid") or DEFAULT_FALLBACK_SSID).strip()
+    if "password" in block:
+        password = str(block.get("password") or "")
+    else:
+        password = str(cfg.get("fallback_password") or DEFAULT_FALLBACK_PASSWORD)
+
+    address = (
+        str(block.get("address") or block.get("ap_address") or default_address or DEFAULT_AP_ADDRESS).strip()
+        or DEFAULT_AP_ADDRESS
+    )
+    hidden = _as_bool(block.get("hidden")) if "hidden" in block else False
+    return {
+        "enabled": enabled,
+        "timeout": timeout,
+        "ssid": ssid,
+        "password": password,
+        "address": address,
+        "hidden": hidden,
+    }
 
 
 def resolve_config(cli_path: str | None = None) -> tuple[Path | None, dict[str, Any]]:
@@ -301,13 +500,13 @@ def apply_client(iface: str, ssid: str, password: str, hidden: bool, timeout: in
     return True
 
 
-def apply_ap(iface: str, ssid: str, password: str, address: str) -> None:
-    """Spustí Wi-Fi Access Point (Hotspot)."""
+def apply_ap(iface: str, ssid: str, password: str, address: str, hidden: bool = False) -> None:
+    """Spustí Wi-Fi Access Point (Hotspot). hidden=True = nevysílat SSID v beaconech."""
     if len(password) < 8:
         raise RuntimeError("AP režim vyžaduje heslo o délce alespoň 8 znaků (WPA2).")
     _delete_connection(AP_CON)
     _modify_autoconnect(CLIENT_CON, False)
-    result = _nmcli(
+    args = [
         "connection",
         "add",
         "type",
@@ -332,8 +531,10 @@ def apply_ap(iface: str, ssid: str, password: str, address: str) -> None:
         "yes",
         "connection.autoconnect-priority",
         "200",
-        check=False,
-    )
+    ]
+    if hidden:
+        args += ["802-11-wireless.hidden", "yes"]
+    result = _nmcli(*args, check=False)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "nmcli connection add (AP) selhalo").strip())
     _set_psk(AP_CON, password)
@@ -347,7 +548,8 @@ def apply_ap(iface: str, ssid: str, password: str, address: str) -> None:
         raise RuntimeError(f"nmcli connection up {AP_CON} selhalo: {err}")
 
     gw = address.split("/", 1)[0]
-    _log(f"ap: hotspot '{ssid}' spuštěn na {iface}, web: http://{gw}:8080")
+    visibility = "skrytý (hidden)" if hidden else "viditelný"
+    _log(f"ap: hotspot '{ssid}' ({visibility}) spuštěn na {iface}, web: http://{gw}:8080")
 
 
 def apply_ethernet() -> None:
@@ -374,21 +576,10 @@ def cmd_apply(config_arg: str | None) -> int:
 
     _log(f"Používám konfiguraci: {cfg_path}")
     mode = str(cfg.get("mode") or "client").strip().lower()
-    ssid = str(cfg.get("ssid") or "").strip()
-    password = str(cfg.get("password") or "")
     iface_pref = str(cfg.get("iface") or "").strip()
     country = str(cfg.get("country") or DEFAULT_COUNTRY).strip() or DEFAULT_COUNTRY
-    ap_address = str(cfg.get("ap_address") or DEFAULT_AP_ADDRESS).strip() or DEFAULT_AP_ADDRESS
-    hidden = _as_bool(cfg.get("hidden"))
-
-    fallback_enabled = _as_bool(cfg.get("fallback", True))
-    try:
-        fallback_timeout = int(cfg.get("fallback_timeout") or DEFAULT_FALLBACK_TIMEOUT)
-    except (ValueError, TypeError):
-        fallback_timeout = DEFAULT_FALLBACK_TIMEOUT
-
-    fallback_ssid = str(cfg.get("fallback_ssid") or DEFAULT_FALLBACK_SSID).strip()
-    fallback_password = str(cfg.get("fallback_password") or DEFAULT_FALLBACK_PASSWORD)
+    ap_cfg = resolve_ap_settings(cfg)
+    fb_cfg = resolve_fallback_ap_settings(cfg, default_address=ap_cfg["address"])
 
     if mode not in ("client", "ap") and mode not in ETHERNET_MODES:
         _log(f"CHYBA: Neznámý mode '{mode}' (očekávám client|ap|ethernet)")
@@ -414,27 +605,46 @@ def cmd_apply(config_arg: str | None) -> int:
 
     try:
         if mode == "client":
+            candidates = resolve_client_networks(cfg)
             connected = False
-            if ssid:
-                connected = apply_client(iface, ssid, password, hidden, timeout=fallback_timeout)
+            if not candidates:
+                _log("Žádná klientská síť (networks: / ssid) v konfiguraci.")
             else:
-                _log("ssid je prázdné v konfiguraci.")
+                _log(f"client: {len(candidates)} síť(í) podle priority")
+                for i, entry in enumerate(candidates, start=1):
+                    _log(f"client: [{i}/{len(candidates)}] zkouším '{entry['ssid']}'...")
+                    connected = apply_client(
+                        iface,
+                        entry["ssid"],
+                        entry["password"],
+                        entry["hidden"],
+                        timeout=fb_cfg["timeout"],
+                    )
+                    if connected:
+                        break
 
             if not connected:
-                if fallback_enabled:
-                    _log(f"Aktivuji záchranný Fallback Hotspot (AP) '{fallback_ssid}'...")
-                    apply_ap(iface, fallback_ssid, fallback_password, ap_address)
+                if fb_cfg["enabled"]:
+                    _log(f"Aktivuji záchranný Fallback Hotspot (AP) '{fb_cfg['ssid']}'...")
+                    apply_ap(
+                        iface,
+                        fb_cfg["ssid"],
+                        fb_cfg["password"],
+                        fb_cfg["address"],
+                        hidden=bool(fb_cfg["hidden"]),
+                    )
                     return 0
-                else:
-                    _log("Fallback je zakázán (fallback=false), síť zůstává nepřipojena.")
-                    return 1 if ssid else 0
+                _log("Fallback je zakázán (fallback_ap.enabled=false), síť zůstává nepřipojena.")
+                return 1 if candidates else 0
             return 0
-        else:
-            # Režim AP
-            ap_ssid = ssid if ssid else fallback_ssid
-            ap_pass = password if password else fallback_password
-            apply_ap(iface, ap_ssid, ap_pass, ap_address)
-            return 0
+
+        # Režim AP — jedna síť (networks: se nepoužívá)
+        if isinstance(cfg.get("networks"), list) and cfg.get("networks"):
+            _log("mode: ap — seznam networks: ignoruji (hotspot bere ap: / ssid)")
+        ap_ssid = ap_cfg["ssid"] if ap_cfg["ssid"] else fb_cfg["ssid"]
+        ap_pass = ap_cfg["password"] if ap_cfg["password"] else fb_cfg["password"]
+        apply_ap(iface, ap_ssid, ap_pass, ap_cfg["address"], hidden=bool(ap_cfg["hidden"]))
+        return 0
 
     except (RuntimeError, subprocess.CalledProcessError) as exc:
         _log(f"CHYBA: {exc}")
