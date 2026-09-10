@@ -323,6 +323,21 @@ def _copy_if_missing(src: Path, dst: Path, *, label: str) -> None:
         print(f"         VAROVANI: kopie selhala ({label}): {exc}", file=sys.stderr)
 
 
+def _copy_overwrite(src: Path, dst: Path, *, label: str) -> None:
+    """Vždy přepíše cíl (vzorový profil ze setup/examples)."""
+    if not src.is_file():
+        print(f"         VAROVANI: chybi zdroj ({label}): {src}", file=sys.stderr)
+        return
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        existed = dst.exists()
+        shutil.copy2(src, dst)
+        verb = "aktualizovan vzor" if existed else "zkopirovano"
+        print(f"         {verb}: {src} -> {dst}")
+    except OSError as exc:
+        print(f"         VAROVANI: kopie selhala ({label}): {exc}", file=sys.stderr)
+
+
 def _seed_rmodus_manual_from_setup(deploy_path: Path, rmodus_root: Path) -> None:
     """PDF navod v koreni sw-install -> ~/rmodus/data/manual.pdf (kopie, git zustava)."""
     src = deploy_path / _RMODUS_MANUAL_PDF
@@ -333,7 +348,10 @@ def _seed_rmodus_manual_from_setup(deploy_path: Path, rmodus_root: Path) -> None
 def _seed_rmodus_configs(deploy_path: Path, rmodus_root: Path) -> tuple[Path, Path]:
     """
     profiles/ + active + network.yaml.
-    Nikdy nepřepisuje existující profil, active ani network.yaml (reinstall zachová vše).
+
+    Reinstall:
+    - vždy přepíše profiles/rmodus-example.yaml (oficiální vzor ze setup/examples)
+    - ostatní profily, active a network.yaml nepřepisuje
     """
     configs = rmodus_root / "configs"
     profiles = configs / "profiles"
@@ -346,7 +364,7 @@ def _seed_rmodus_configs(deploy_path: Path, rmodus_root: Path) -> tuple[Path, Pa
     dest_profile = profiles / "rmodus-example.yaml"
 
     if example_robot.is_file():
-        _copy_if_missing(example_robot, dest_profile, label="rmodus-example.yaml")
+        _copy_overwrite(example_robot, dest_profile, label="rmodus-example.yaml")
     else:
         print(f"         VAROVANI: chybi vzor {example_robot}", file=sys.stderr)
 
@@ -683,7 +701,7 @@ def main() -> int:
     _banner(f"[0b] Manual: setup/{_RMODUS_MANUAL_PDF} -> ~/rmodus/data/")
     _seed_rmodus_manual_from_setup(deploy_path, rmodus_root)
     print("")
-    _banner("[0c] Configs: profiles + active + network.yaml (existujici se neprepisuji)")
+    _banner("[0c] Configs: rmodus-example vzdy aktualni; ostatni profily/active/network zachovat")
     _seed_rmodus_configs(deploy_path, rmodus_root)
     _remove_legacy_rmodus_config_cli()
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
@@ -783,7 +801,7 @@ def main() -> int:
         print("  (4b) rf2o - preskoceno (FETCH_RF2O=0; optional feature)")
 
     print("")
-    _banner("[4c] Configs profiles/active/network (bez prepsani existujicich)")
+    _banner("[4c] Configs: rmodus-example overwrite; ostatni profily/active/network zachovat")
     _seed_rmodus_configs(deploy_path, rmodus_root)
     _remove_legacy_rmodus_config_cli()
 

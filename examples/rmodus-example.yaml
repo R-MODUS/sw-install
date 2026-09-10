@@ -4,6 +4,7 @@
 # Po instalaci: ~/rmodus/configs/profiles/rmodus-example.yaml
 # Aktivní jméno: ~/rmodus/configs/active  (např. rmodus-example)
 # Síť zvlášť:   ~/rmodus/configs/network.yaml
+# Reinstall vždy přepíše tento soubor — vlastní úpravy dej do jiného profilu.
 #
 # Bloky:  meta, boot, web, bringup, /** (hardware / ROS 2)
 #

@@ -20,7 +20,7 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 ```
 
 - **`manual.pdf`** lezi primo v **`sw-install`** vedle `install.py` (neni slozka `defaults/`).
-- **Robot profil:** `profiles/<name>.yaml` + ukazatel **`active`**. Install nakopiruje example jen pokud soubor jeste neexistuje — **reinstall neprepisuje zadne profily ani active/network.yaml**.
+- **Robot profil:** `profiles/<name>.yaml` + ukazatel **`active`**. Install **vždy přepíše** `profiles/rmodus-example.yaml` ze `setup/examples/`. Ostatní profily, `active` a `network.yaml` při reinstall **zachová**.
 - **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` + `/**` musi sedet s example profilem.
 - **Sit:** samostatny **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** jen enable (ne start). Netplan `99-rmodus-nm.yaml`; apply po rebootu.
 - **`boot.rmodus`** v robot profilu; **`boot.network`** v network.yaml. `false` = no-op pri startu.

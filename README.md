@@ -20,7 +20,7 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 ```
 
 - **`manual.pdf`** lives in **`sw-install`** next to `install.py` (no `defaults/` folder).
-- **Robot profile:** `profiles/<name>.yaml` + **`active`** pointer. Install copies the example only if missing — **reinstall never overwrites any profile, active, or network.yaml**.
+- **Robot profile:** `profiles/<name>.yaml` + **`active`** pointer. Install **always overwrites** `profiles/rmodus-example.yaml` from `setup/examples/`. Other profiles, `active`, and `network.yaml` are **kept** on reinstall.
 - **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` + `/**` must match the example profile.
 - **Network:** separate **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** is enable-only (no start). Netplan `99-rmodus-nm.yaml`; apply after reboot.
 - **`boot.rmodus`** in robot profile; **`boot.network`** in network.yaml. `false` = no-op at start.
