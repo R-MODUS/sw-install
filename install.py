@@ -383,20 +383,15 @@ def _seed_rmodus_configs(deploy_path: Path, rmodus_root: Path) -> tuple[Path, Pa
     return active_file, network_yaml
 
 
-def _install_rmodus_config_cli(deploy_path: Path) -> None:
-    """Standalone CLI + lib (bez ROS) pro systemd / SSH."""
-    lib_src = deploy_path / "config" / "rmodus_profiles.py"
-    cli_src = deploy_path / "config" / "rmodus-config"
-    if not lib_src.is_file() or not cli_src.is_file():
-        print(
-            f"         VAROVANI: chybi {lib_src.name} nebo {cli_src.name}",
-            file=sys.stderr,
-        )
-        return
-    _sudo(["mkdir", "-p", "/usr/local/lib/rmodus"], check=True)
-    _sudo(["install", "-m", "644", str(lib_src), "/usr/local/lib/rmodus/rmodus_profiles.py"], check=True)
-    _sudo(["install", "-m", "755", str(cli_src), "/usr/local/sbin/rmodus-config"], check=True)
-    print("         /usr/local/sbin/rmodus-config + /usr/local/lib/rmodus/rmodus_profiles.py")
+def _remove_legacy_rmodus_config_cli() -> None:
+    """Remove old system CLI (profiles are resolved in entrypoint + ROS rmodus_config)."""
+    for path in (
+        Path("/usr/local/sbin/rmodus-config"),
+        Path("/usr/local/lib/rmodus/rmodus_profiles.py"),
+    ):
+        if path.is_file():
+            _sudo(["rm", "-f", str(path)], check=False)
+            print(f"         odstraneno legacy {path}")
 
 
 _NETWORK_DEB_PKGS: tuple[str, ...] = (
@@ -690,7 +685,7 @@ def main() -> int:
     print("")
     _banner("[0c] Configs: profiles + active + network.yaml (existujici se neprepisuji)")
     _seed_rmodus_configs(deploy_path, rmodus_root)
-    _install_rmodus_config_cli(deploy_path)
+    _remove_legacy_rmodus_config_cli()
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
@@ -790,7 +785,7 @@ def main() -> int:
     print("")
     _banner("[4c] Configs profiles/active/network (bez prepsani existujicich)")
     _seed_rmodus_configs(deploy_path, rmodus_root)
-    _install_rmodus_config_cli(deploy_path)
+    _remove_legacy_rmodus_config_cli()
 
     if not _find_package_xml_under(ws_path / "src"):
         print(
@@ -979,7 +974,7 @@ def main() -> int:
     print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
     print("  * Entrypoint:       ~/rmodus/setup/systemd/rmodus_entrypoint.sh")
     print("  * Profily:          ~/rmodus/configs/profiles/*.yaml")
-    print("  * Active:           ~/rmodus/configs/active  (rmodus-config activate <name>)")
+    print("  * Active:           ~/rmodus/configs/active  (jmeno profilu; web / ros2 run rmodus_config)")
     print("  * Sit:              ~/rmodus/configs/network.yaml")
     print("  * Vzor robot:       ~/rmodus/setup/examples/rmodus-example.yaml")
     print("  * Vzor sit:         ~/rmodus/setup/examples/rmodus-network.example.yaml")

@@ -10,7 +10,7 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 
 ```
 ~/rmodus/
-  setup/          sw-install (`install.py`, `examples/`, `network/`, `systemd/`, `config/`)
+  setup/          sw-install (`install.py`, `examples/`, `network/`, `systemd/`)
   ros2_ws/        colcon workspace (src/, install/)
   configs/
     profiles/     robot profily `*.yaml` (vzor: `setup/examples/rmodus-example.yaml`)
@@ -24,8 +24,8 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 - **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` + `/**` musi sedet s example profilem.
 - **Sit:** samostatny **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** jen enable (ne start). Netplan `99-rmodus-nm.yaml`; apply po rebootu.
 - **`boot.rmodus`** v robot profilu; **`boot.network`** v network.yaml. `false` = no-op pri startu.
-- **`rmodus.service`** → aktivni profil: `ros2 launch rmodus_bringup … robot_yaml:=profiles/<active>.yaml`.
-- CLI: **`rmodus-config list|activate|path`** (`/usr/local/sbin`); ROS: balicek **`rmodus_config`**.
+- **`rmodus.service`** → entrypoint cte `active` a spusti `robot_yaml:=profiles/<active>.yaml`.
+- Sprava profilu: ROS balicek **`rmodus_config`** (web UI / `ros2 run rmodus_config …`).
 - Web UI: blok **`web:`** v aktivnim robot profilu.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.

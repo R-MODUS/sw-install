@@ -31,6 +31,10 @@ web:
   # true  = vývojový režim (bez přihlašování)
   testing: true
 
+  # Kořen configs (install.py → ~/rmodus/configs). Prázdné = odvoď z --config
+  # (…/profiles/*.yaml) nebo $RMODUS_CONFIGS / ~/rmodus/configs.
+  configs_root: ""
+
   host: "0.0.0.0"
   port: 8080
   log_level: info
@@ -70,7 +74,7 @@ web:
       map: true
       sensors: true
       docs: true
-      config: true
+      config: true   # záložka Profily
       users: true
 
 # ============================================================

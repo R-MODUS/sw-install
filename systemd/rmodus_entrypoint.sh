@@ -6,18 +6,24 @@ set -eo pipefail
 
 _CONFIGS="__CONFIGS_ROOT__"
 _NETWORK_BIN="/usr/local/sbin/rmodus-network"
-_CONFIG_BIN="/usr/local/sbin/rmodus-config"
 
-# Resolve aktivni robot profil (profiles/ + active)
-if [ -x "$_CONFIG_BIN" ]; then
-    _CFG="$("$_CONFIG_BIN" --configs-root "$_CONFIGS" path --active)"
-else
-    _ACTIVE="$(tr -d '[:space:]' < "${_CONFIGS}/active" 2>/dev/null || true)"
-    _CFG="${_CONFIGS}/profiles/${_ACTIVE}.yaml"
+# Aktivní profil: configs/active → configs/profiles/<name>.yaml|.yml
+_ACTIVE="$(head -n1 "${_CONFIGS}/active" 2>/dev/null | sed 's/#.*//' | tr -d '[:space:]' || true)"
+if [ -z "$_ACTIVE" ]; then
+    echo "rmodus: chybi ukazatel ${_CONFIGS}/active (jmeno profilu)" >&2
+    exit 1
 fi
 
+_CFG=""
+for _ext in yaml yml; do
+    if [ -f "${_CONFIGS}/profiles/${_ACTIVE}.${_ext}" ]; then
+        _CFG="${_CONFIGS}/profiles/${_ACTIVE}.${_ext}"
+        break
+    fi
+done
+
 # boot.rmodus=false → tiché ukončení
-if [ -x "$_NETWORK_BIN" ]; then
+if [ -x "$_NETWORK_BIN" ] && [ -n "$_CFG" ]; then
     set +e
     "$_NETWORK_BIN" boot-check rmodus "$_CFG"
     _boot_rc=$?
@@ -31,8 +37,9 @@ if [ -x "$_NETWORK_BIN" ]; then
     fi
 fi
 
-if [ ! -f "$_CFG" ]; then
-    echo "rmodus: chybi aktivni profil ($_CFG) — rmodus-config activate <name>" >&2
+if [ -z "$_CFG" ] || [ ! -f "$_CFG" ]; then
+    echo "rmodus: aktivni profil '${_ACTIVE}' neexistuje v ${_CONFIGS}/profiles/ (*.yaml|*.yml)" >&2
+    echo "rmodus: nastav jmeno v ${_CONFIGS}/active nebo vytvor profil (web UI / rmodus_config)" >&2
     exit 1
 fi
 
