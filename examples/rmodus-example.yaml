@@ -78,23 +78,23 @@ web:
 # ============================================================
 
 bringup:
-  chassis: true
-  description: true
-  hw: true
-  uart_output: true
-  estop: true
-  bumper: true
-  cliff: true
-  flow: true
-  display: true
+  chassis: false
+  description: false
+  hw: false
+  uart_output: false
+  estop: false
+  bumper: false
+  cliff: false
+  flow: false
+  display: false
   web: true
   rviz: false
   sim: false
-  localization: true
-  navigation: true
-  slam: true
+  localization: false
+  navigation: false
+  slam: false
   rf2o: false
-  obstacle_cloud: true
+  obstacle_cloud: false
 
 /**:
   ros__parameters:
