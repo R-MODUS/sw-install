@@ -25,7 +25,7 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 - **Sit:** samostatny **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** jen enable (ne start). Netplan `99-rmodus-nm.yaml`; apply po rebootu.
 - **`boot.rmodus`** v robot profilu; **`boot.network`** v network.yaml. `false` = no-op pri startu.
 - **`rmodus.service`** → entrypoint cte `active` a spusti `robot_yaml:=profiles/<active>.yaml`.
-- Sprava profilu: ROS balicek **`rmodus_config`** (web UI / `ros2 run rmodus_config …`).
+- Sprava profilu: ROS balicek **`rmodus_config`** (`bringup.config`, services `/rmodus/config/*`; web UI / `ros2`).
 - Web UI: blok **`web:`** v aktivnim robot profilu.
 
 Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.

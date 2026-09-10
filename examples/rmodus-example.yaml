@@ -82,6 +82,7 @@ web:
 # ============================================================
 
 bringup:
+  config: true
   chassis: false
   description: false
   hw: false
