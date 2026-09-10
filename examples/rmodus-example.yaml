@@ -102,6 +102,13 @@ bringup:
   slam: false
   rf2o: false
   obstacle_cloud: false
+  # Vlastní launchy (drivers mimo jádro). Chybí-li balík → skip + log.
+  extras:
+    - package: neato_lidar
+      launch: neato_lidar.launch.py
+      args:
+        config_file: $robot_yaml
+  # - path: ~/my_stack/extra.launch.py
 
 /**:
   ros__parameters:
@@ -148,6 +155,18 @@ bringup:
       mount_rpy: [0.0, 0.0, 0.0]
       offset: [0.005, 0.0, 0.2]
       rpy: [0.0, 0.0, 0.0]
+
+    # Driver (bringup.extras → neato_lidar). TF bere blok lidar: výše.
+    neato_lidar:
+      enabled: true
+      topic: /scan
+      frame_id: lidar_beam
+      port: /dev/ttyUSB0
+      motor_pin: 19
+      frequency: 10000
+      target_rpm: 300
+      range_min: 0.05
+      range_max: 5.0
 
     uart_output:
       enabled: true
