@@ -75,6 +75,7 @@ web:
       sensors: true
       docs: true
       config: true   # záložka Profily
+      settings: true # Network settings
       users: true
 
 # ============================================================
