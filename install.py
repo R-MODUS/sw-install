@@ -49,6 +49,12 @@ DEFAULTS: dict[str, str] = {
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
+    # nginx :80 → 127.0.0.1:8080 (rmodus_web). URL bez portu.
+    "ENABLE_RMODUS_WEB_PROXY": "1",
+    # avahi → http://rmodus.local  (install defaultne nastavi hostname)
+    "ENABLE_RMODUS_MDNS": "1",
+    # Default rmodus → http://rmodus.local. Prazdne = hostname nemenit.
+    "RMODUS_HOSTNAME": "rmodus",
     "INSTALL_RMODUS_ROSDEP_RULES": "1",
     "RMODUS_ROSDEP_YAML_URL": "",
     "INSTALL_RMODUS_HW_PIP": "1",
@@ -469,6 +475,84 @@ def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
     print("         netplan renderer NM: /etc/netplan/99-rmodus-nm.yaml (plati po rebootu)")
 
 
+def _install_rmodus_web_proxy(deploy_path: Path) -> None:
+    """nginx reverse proxy :80 → 127.0.0.1:8080 (vcetne WebSocket /ws)."""
+    site_src = deploy_path / "nginx" / "rmodus-web.conf"
+    map_src = deploy_path / "nginx" / "rmodus-websocket-map.conf"
+    if not site_src.is_file() or not map_src.is_file():
+        print(
+            f"         VAROVANI: chybi nginx sablony v {deploy_path / 'nginx'}",
+            file=sys.stderr,
+        )
+        return
+
+    print("         apt: nginx")
+    _apt(["install", "-y", "nginx"], check=True)
+
+    map_dst = "/etc/nginx/conf.d/rmodus-websocket-map.conf"
+    site_avail = "/etc/nginx/sites-available/rmodus-web"
+    site_enabled = "/etc/nginx/sites-enabled/rmodus-web"
+    _sudo_write(map_dst, map_src.read_text(encoding="utf-8"))
+    _sudo_write(site_avail, site_src.read_text(encoding="utf-8"))
+
+    # Vychozi site na :80 by konfliktil s default_server.
+    default_enabled = Path("/etc/nginx/sites-enabled/default")
+    if default_enabled.is_symlink() or default_enabled.is_file():
+        _sudo(["rm", "-f", str(default_enabled)], check=False)
+        print("         nginx: odpojen sites-enabled/default")
+
+    _sudo(["ln", "-sfn", site_avail, site_enabled], check=True)
+    test = _sudo(["nginx", "-t"], check=False)
+    if test.returncode != 0:
+        print("         VAROVANI: nginx -t selhal — proxy neaktivuji", file=sys.stderr)
+        return
+
+    _sudo(["systemctl", "enable", "nginx"], check=False)
+    _sudo(["systemctl", "reload", "nginx"], check=False)
+    # reload selze kdyz nginx jeste nebezi
+    start = _sudo(["systemctl", "start", "nginx"], check=False)
+    if start.returncode != 0:
+        print("         VAROVANI: systemctl start nginx selhal", file=sys.stderr)
+    else:
+        print("         nginx: http://<ip>/ → 127.0.0.1:8080 (WebSocket OK)")
+        print("         (rmodus_web nechte na web.port: 8080)")
+
+
+def _install_rmodus_mdns(hostname: str) -> None:
+    """Avahi + hostname. Default RMODUS_HOSTNAME=rmodus → http://rmodus.local (ucet SSH se nemeni)."""
+    print("         apt: avahi-daemon")
+    _apt(["install", "-y", "avahi-daemon"], check=True)
+    _sudo(["systemctl", "enable", "avahi-daemon"], check=False)
+    _sudo(["systemctl", "start", "avahi-daemon"], check=False)
+
+    name = (hostname or "").strip()
+    if name:
+        # Povolene: pismena, cisla, pomlcka (DNS label).
+        if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
+            print(
+                f"         VAROVANI: RMODUS_HOSTNAME='{name}' neni platny hostname — nemenim",
+                file=sys.stderr,
+            )
+        else:
+            cur = _run(["hostname"], check=False)
+            current = (cur.stdout or "").strip() if cur.returncode == 0 else ""
+            if current.lower() == name.lower():
+                print(f"         hostname uz je '{name}' → http://{name}.local/")
+            else:
+                hc = _sudo(["hostnamectl", "set-hostname", name], check=False)
+                if hc.returncode == 0:
+                    print(f"         hostname: '{current or '?'}' → '{name}' → http://{name}.local/")
+                else:
+                    print("         VAROVANI: hostnamectl set-hostname selhal", file=sys.stderr)
+    else:
+        cur = _run(["hostname"], check=False)
+        current = (cur.stdout or "").strip() if cur.returncode == 0 else "raspberrypi"
+        print(f"         hostname nemenim (RMODUS_HOSTNAME prazdne; ted '{current}')")
+        print(f"         mDNS: http://{current}.local/")
+
+    print("         mDNS aktivni (ucet SSH / login se nemeni, jen jmeno stroje)")
+
+
 def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env: Path) -> None:
     """Aktualizuje blok RMODUS v ~/.bashrc (vcetne stare cesty rmodus_ws / rmodus_setup)."""
     ws_setup = ws_path / "install" / "setup.bash"
@@ -712,6 +796,11 @@ def main() -> int:
         f"samostatna faze={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
     print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
+    print(
+        f"  web proxy / mDNS: ENABLE_RMODUS_WEB_PROXY={c.get('ENABLE_RMODUS_WEB_PROXY', '1')}  "
+        f"ENABLE_RMODUS_MDNS={c.get('ENABLE_RMODUS_MDNS', '1')}  "
+        f"RMODUS_HOSTNAME={c.get('RMODUS_HOSTNAME', '')!r}"
+    )
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
     print(f"  pip rmodus_*: {c['INSTALL_RMODUS_HW_PIP']}")
     print("")
@@ -955,6 +1044,22 @@ def main() -> int:
     else:
         print("         Preskoceno (ENABLE_RMODUS_NETWORK=0).")
 
+    # [9a2]
+    print("")
+    _banner("[9a2] nginx reverse proxy (:80 → :8080)")
+    if _as_bool(c.get("ENABLE_RMODUS_WEB_PROXY", "1")):
+        _install_rmodus_web_proxy(deploy_path)
+    else:
+        print("         Preskoceno (ENABLE_RMODUS_WEB_PROXY=0).")
+
+    # [9a3]
+    print("")
+    _banner("[9a3] mDNS / hostname (Avahi → *.local)")
+    if _as_bool(c.get("ENABLE_RMODUS_MDNS", "1")):
+        _install_rmodus_mdns(c.get("RMODUS_HOSTNAME", "rmodus"))
+    else:
+        print("         Preskoceno (ENABLE_RMODUS_MDNS=0).")
+
     # [9b]
     print("")
     _banner("[9b] systemd - jednotka rmodus.service (enable)")
@@ -1021,6 +1126,9 @@ def main() -> int:
     print("  * WiFi sluzba:      sudo systemctl start rmodus-network   (nebo reboot)")
     print("  * ROS bringup:      sudo systemctl start rmodus")
     print("                      (robot_yaml:= aktivni profil z profiles/)")
+    print("  * Web UI:           http://<ip>/  nebo  http://rmodus.local/")
+    print("                      (nginx → :8080; primo: http://<ip>:8080)")
+    print("  * Hostname:         default rmodus (RMODUS_HOSTNAME); SSH ucet beze zmeny")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
     print("  * ROS v SSH shellu: source ~/.bashrc")
     print("  * Overeni:          ros2 doctor")

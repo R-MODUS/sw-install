@@ -23,6 +23,8 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 - **Robot profile:** `profiles/<name>.yaml` + **`active`** pointer. Install **always overwrites** `profiles/rmodus-example.yaml` from `setup/examples/`. Other profiles, `active`, and `network.yaml` are **kept** on reinstall.
 - **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` (+ `extras`) + `/**` must match the example profile.
 - **Network:** separate **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** is enable-only (no start). Netplan `99-rmodus-nm.yaml`; apply after reboot.
+- **Web:** nginx reverse proxy **`:80` → `:8080`** (`ENABLE_RMODUS_WEB_PROXY`). URL without port: `http://<ip>/`.
+- **mDNS:** Avahi (`ENABLE_RMODUS_MDNS`) + default **`RMODUS_HOSTNAME=rmodus`** → `http://rmodus.local/`. Install overwrites hostname (Imager value does not matter). SSH user account unchanged. Empty `RMODUS_HOSTNAME=` = leave hostname as-is.
 - **`boot.rmodus`** in robot profile; **`boot.network`** in network.yaml. `false` = no-op at start.
 - **`rmodus.service`** → entrypoint reads `active` and launches `robot_yaml:=profiles/<active>.yaml`.
 - Profile CRUD: ROS package **`rmodus_config`** (`bringup.config`, services `/rmodus/config/*`; web UI / `ros2`).
@@ -48,7 +50,8 @@ Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci
 ### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
 
 Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
-`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`, atd.
+`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
+`ENABLE_RMODUS_WEB_PROXY`, `ENABLE_RMODUS_MDNS`, `RMODUS_HOSTNAME`, etc.
 Lidar/IMU drivers (Neato, Xsens, …) are not fetched by install — handle outside / as needed.
 
 ### Po instalaci
