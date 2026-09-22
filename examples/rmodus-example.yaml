@@ -54,6 +54,7 @@ web:
     imu: /imu/data
     bumper_prefix: /bumper/
     cliff_prefix: /cliff/
+    flow_prefix: /visual_flow/
     map: /map
     map_updates: /map_updates
     plan: /received_global_plan
@@ -69,11 +70,13 @@ web:
     frame_id: base_link
 
   ui:
+    persist_local: true
     nav_tabs:
       status: true
       controls: true
       map: true
       sensors: true
+      tf: true
       docs: true
       config: true   # záložka Profily
       settings: true # Network settings

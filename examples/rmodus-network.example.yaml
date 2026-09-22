@@ -32,7 +32,7 @@ network:
   ap:
     ssid: "R-MODUS"
     password: "rmodus123"
-    address: "192.168.50.1/24"     # web: http://192.168.50.1:8080
+    address: "192.168.50.1/24"     # AP: http://192.168.50.1/  (nginx → :8080)
     hidden: false
 
   fallback_ap:

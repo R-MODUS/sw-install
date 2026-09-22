@@ -23,6 +23,8 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 - **Robot profil:** `profiles/<name>.yaml` + ukazatel **`active`**. Install **vždy přepíše** `profiles/rmodus-example.yaml` ze `setup/examples/`. Ostatní profily, `active` a `network.yaml` při reinstall **zachová**.
 - **`rmodus.yaml` (bringup package)** = ROS default; `bringup:` (+ `extras`) + `/**` musi sedet s example profilem.
 - **Sit:** samostatny **`network.yaml`** (`boot.network` + `network:`). Systemd **`rmodus-network`** jen enable (ne start). Netplan `99-rmodus-nm.yaml`; apply po rebootu.
+- **Web:** nginx reverse proxy **`:80` → `:8080`** (`ENABLE_RMODUS_WEB_PROXY`). URL bez portu: `http://<ip>/`.
+- **mDNS:** Avahi (`ENABLE_RMODUS_MDNS`) + default **`RMODUS_HOSTNAME=rmodus`** → `http://rmodus.local/`. Install hostname přepíše (Imager hodnota nevadí). SSH účet se nemění. Prázdné `RMODUS_HOSTNAME=` = nemenit.
 - **`boot.rmodus`** v robot profilu; **`boot.network`** v network.yaml. `false` = no-op pri startu.
 - **`rmodus.service`** → entrypoint cte `active` a spusti `robot_yaml:=profiles/<active>.yaml`.
 - Sprava profilu: ROS balicek **`rmodus_config`** (`bringup.config`, services `/rmodus/config/*`; web UI / `ros2`).
@@ -48,7 +50,8 @@ Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci
 ### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
 
 Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
-`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`, atd.
+`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
+`ENABLE_RMODUS_WEB_PROXY`, `ENABLE_RMODUS_MDNS`, `RMODUS_HOSTNAME`, atd.
 Lidar/IMU drivery (Neato, Xsens, …) install netaha — resit mimo / podle potreby.
 
 ### Po instalaci
