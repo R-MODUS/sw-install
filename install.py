@@ -46,6 +46,9 @@ DEFAULTS: dict[str, str] = {
     "SW_NAV_BRANCH": "dev",
     # Volitelný third-party odom (default off). Později: dle profilu / optional_depend.
     "FETCH_RF2O": "0",
+    # micro-ROS agent (serial). Neni v ROS apt pro Jazzy — clone + build do ros2_ws.
+    # Port neni soucast instalace; cte ho bringup z profilu (microros.items).
+    "FETCH_MICROROS": "1",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
@@ -265,6 +268,48 @@ def _sparse_clone_fix_missing(snav: Path, dirs: list[str]) -> None:
     if any(not (snav / d / "package.xml").is_file() for d in dirs):
         print(f"  (4a-fix) doplnuji sparse-checkout: {' '.join(dirs)}")
         _run(["git", "-C", str(snav), "sparse-checkout", "set", *dirs], check=True)
+
+
+def _clone_micro_ros_setup(ws_path: Path, ros_distro: str) -> None:
+    """Klon micro_ros_setup do ros2_ws. Agent samotny stahne az create_agent_ws.sh."""
+    dest = ws_path / "src" / "micro_ros_setup"
+    if (dest / ".git").is_dir():
+        print(f"         (slozka uz existuje - preskoceno; pro cisty stav smazte {dest})")
+        return
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run(
+        [
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            "-b",
+            ros_distro,
+            "https://github.com/micro-ROS/micro_ros_setup.git",
+            str(dest),
+        ],
+        check=True,
+    )
+
+
+def _build_micro_ros_agent(ws_path: Path, ros_distro: str, build_env: dict[str, str]) -> None:
+    """create_agent_ws.sh + build_agent.sh. Vysledek je ve stejnem ros2_ws/install."""
+    agent_xml = ws_path / "src" / "uros" / "micro-ROS-Agent" / "micro_ros_agent" / "package.xml"
+    create = ""
+    if not agent_xml.is_file():
+        create = "ros2 run micro_ros_setup create_agent_ws.sh && "
+    else:
+        print(f"         zdroje agenta uz jsou ({agent_xml.parent}) - jen build")
+    _bash_script(
+        f"source /opt/ros/{ros_distro}/setup.bash && "
+        f"source {ws_path}/install/setup.bash && "
+        f"{create}"
+        "ros2 run micro_ros_setup build_agent.sh --parallel-workers 1",
+        cwd=ws_path,
+        env=build_env,
+    )
 
 
 def _bash_script(script: str, *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -711,6 +756,10 @@ def main() -> int:
         f"  rf2o:   FETCH={c['FETCH_RF2O']}  (volitelne; default 0) "
         f"samostatna faze={c['BUILD_RF2O_SEPARATE_PHASE']}"
     )
+    print(
+        f"  microros: FETCH={c['FETCH_MICROROS']}  "
+        "(agent do ros2_ws; porty az v profilu microros.items)"
+    )
     print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
     print(f"  rosdep: vlastni R-MODUS pravidla={c['INSTALL_RMODUS_ROSDEP_RULES']}")
     print(f"  pip rmodus_*: {c['INSTALL_RMODUS_HW_PIP']}")
@@ -799,6 +848,12 @@ def main() -> int:
             )
     else:
         print("  (4b) rf2o - preskoceno (FETCH_RF2O=0; optional feature)")
+
+    if _as_bool(c["FETCH_MICROROS"]):
+        print(f"  (4c) micro_ros_setup (vetev {ros_distro}) -> src/micro_ros_setup")
+        _clone_micro_ros_setup(ws_path, ros_distro)
+    else:
+        print("  (4c) micro-ROS - preskoceno (FETCH_MICROROS=0)")
 
     print("")
     _banner("[4c] Configs: rmodus-example overwrite; ostatni profily/active/network zachovat")
@@ -924,6 +979,18 @@ def main() -> int:
         print(f"CHYBA: chybi {ws_path / 'install' / 'setup.bash'} - build nedobehl.", file=sys.stderr)
         return 1
 
+    if _as_bool(c["FETCH_MICROROS"]):
+        print("")
+        _banner("[6d] micro-ROS agent - create_agent_ws + build (serial, -j1)")
+        if ubuntu_codename != "noble":
+            print(
+                "CHYBA: micro_ros_setup (jazzy) stahuje zavislosti jako ubuntu:noble. "
+                f"Tenhle system je {ubuntu_codename or '?'}.",
+                file=sys.stderr,
+            )
+            return 1
+        _build_micro_ros_agent(ws_path, ros_distro, build_env)
+
     # [7]
     print("")
     _banner("[7] ~/.bashrc - source /opt/ros a ros2_ws/install/setup.bash")
@@ -1025,6 +1092,8 @@ def main() -> int:
     print("  * ROS v SSH shellu: source ~/.bashrc")
     print("  * Overeni:          ros2 doctor")
     print(f"  * ROS domena / RMW: {ros_env}")
+    print("  * micro-ROS agent:  bringup.microros + microros.items v aktivnim profilu")
+    print("                      (firmware: serial 115200; vychozi /dev/ttyACM0)")
     print("  * Seriove porty:    ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true")
     print("")
     return 0

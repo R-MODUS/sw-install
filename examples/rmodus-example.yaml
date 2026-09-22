@@ -102,6 +102,7 @@ bringup:
   slam: false
   rf2o: false
   obstacle_cloud: false
+  microros: false
   # Vlastní launchy (drivers mimo jádro). Chybí-li balík → skip + log.
   extras:
     - package: neato_lidar
@@ -109,6 +110,22 @@ bringup:
       args:
         config_file: $robot_yaml
   # - path: ~/my_stack/extra.launch.py
+
+# Jedna deska = jedna položka a jeden agent. device je seriový port (ls /dev/ttyACM* /dev/ttyUSB*).
+# Firmware bumperů běží na 115200. Další desku přidej jako další item s jiným device.
+microros:
+  enabled: true
+  items:
+    - name: bumpers
+      enabled: true
+      transport: serial
+      device: /dev/ttyACM0
+      baudrate: 115200
+    - name: extra
+      enabled: false
+      transport: serial
+      device: /dev/ttyACM1
+      baudrate: 115200
 
 /**:
   ros__parameters:
