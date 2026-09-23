@@ -44,7 +44,7 @@ DEFAULTS: dict[str, str] = {
     # Jádro R-MODUS (+ localization/navigation až je stáhneš přes conf / později profil).
     # Lidar/IMU drivery (neato, xsens, …) sem nepatří — mimo bringup / optional.
     "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display rmodus_config rmodus_bringup rmodus_chassis rmodus_localization rmodus_navigation",
-    "SW_NAV_BRANCH": "dev",
+    "SW_NAV_BRANCH": "main",
     # Volitelný third-party odom (default off). Později: dle profilu / optional_depend.
     "FETCH_RF2O": "0",
     # micro-ROS agent (serial). Neni v ROS apt pro Jazzy — clone + build do ros2_ws.
@@ -450,6 +450,24 @@ def _bash_script(script: str, *, cwd: Path | None = None, env: dict[str, str] | 
 _RMODUS_BASHRC_BEGIN = "# --- RMODUS (pridano install.py) ---"
 _RMODUS_BASHRC_END = "# --- /RMODUS ---"
 
+_RMODUS_BASHRC_SERVICE_FN = r"""rmodus() {
+  local unit=rmodus.service
+  case "$1" in net|network) unit=rmodus-network.service; shift ;; esac
+  local cmd="${1:-status}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    start|stop|restart|enable|disable) sudo systemctl "$cmd" "$unit" "$@" ;;
+    status) systemctl status "$unit" --no-pager "$@" ;;
+    log|logs) journalctl -u "$unit" -f "$@" ;;
+    help|-h|--help)
+      echo "rmodus [net] start|stop|restart|status|enable|disable|log"
+      echo "  bez 'net' = rmodus.service, s 'net' = rmodus-network.service" ;;
+    *) echo "rmodus: neznamy prikaz '$cmd' (rmodus help)" >&2; return 1 ;;
+  esac
+}
+complete -W "start stop restart status enable disable log net help" rmodus
+"""
+
 
 def _resolve_rmodus_paths(c: dict[str, str]) -> tuple[Path, Path, Path]:
     root = Path(c.get("RMODUS_ROOT", str(Path.home() / "rmodus"))).expanduser().resolve()
@@ -718,6 +736,7 @@ def _update_bashrc_rmodus(bashrc: Path, ros_distro: str, ws_path: Path, ros_env:
         f'test -f "{ros_env.resolve()}" && {{ set -a; source "{ros_env.resolve()}"; set +a; }}\n'
         f'source "/opt/ros/{ros_distro}/setup.bash"\n'
         f'test -f "{ws_setup.resolve()}" && source "{ws_setup.resolve()}"\n'
+        f"{_RMODUS_BASHRC_SERVICE_FN}"
         f"{_RMODUS_BASHRC_END}\n"
     )
     if not bashrc.is_file():
@@ -1355,6 +1374,8 @@ def _run_install() -> int:
     print("  * Hostname:         default rmodus (RMODUS_HOSTNAME); SSH ucet beze zmeny")
     print("  * Obnovte skupiny:  newgrp dialout   NEBO   odhlaseni / restart Pi")
     print("  * ROS v SSH shellu: source ~/.bashrc")
+    print("  * Sluzba zkratky:   rmodus start|stop|restart|status|enable|disable|log")
+    print("                      rmodus net ...  (rmodus-network.service)")
     print("  * Overeni:          ros2 doctor")
     print(f"  * ROS domena / RMW: {ros_env}")
     print("  * micro-ROS agent:  bringup.microros + microros.items v aktivnim profilu")

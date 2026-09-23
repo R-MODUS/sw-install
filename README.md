@@ -63,6 +63,13 @@ sudo systemctl start rmodus
 journalctl -u rmodus -f
 ```
 
+Zkratky v `~/.bashrc` (blok RMODUS):
+
+```bash
+rmodus start|stop|restart|status|enable|disable|log   # rmodus.service
+rmodus net stop|start|status|log                      # rmodus-network.service
+```
+
 Entrypoint pro systemd: **`~/rmodus/setup/systemd/rmodus_entrypoint.sh`** (ne kopie v `~/`).
 
 Rucni preinstalace:
