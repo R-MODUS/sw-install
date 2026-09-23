@@ -59,14 +59,14 @@ web:
     map_updates: /map_updates
     plan: /received_global_plan
     goal_pose: /goal_pose
-    cmd_vel: /cmd_vel
+    cmd_vel: /web/cmd_vel     # joystick = vstup web v cmd_mux
     e_stop_state: /rmodus/e_stop
     e_stop_request: /rmodus/e_stop/request
     e_stop_reset: /rmodus/e_stop/reset
     discovery_rate_hz: 1.0
 
   cmd:
-    use_twist_stamped: false
+    use_twist_stamped: false   # musí sedět s cmd_mux.use_stamped
     frame_id: base_link
 
   ui:
@@ -92,8 +92,9 @@ bringup:
   description: false
   hw: false
   uart_output: false
-  estop: false
-  bumper: false
+  estop: false        # false = cmd_mux bez zámku (test bez stopky)
+  cmd_mux: true       # twist_mux: teleop > web > nav → /cmd_vel
+  bumper: true
   cliff: false
   flow: false
   display: false
@@ -105,10 +106,10 @@ bringup:
   slam: false
   rf2o: false
   obstacle_cloud: false
-  microros: false
+  microros: true
   # Vlastní launchy. enabled: false polozku nespusti, zvlastni definice zustava.
   extras:
-    - enabled: true
+    - enabled: false
       package: neato_lidar
       launch: neato_lidar.launch.py
       args:
@@ -126,7 +127,8 @@ microros:
       transport: serial
       device: /dev/ttyACM0
       baudrate: 115200
-    - name: extra
+    # Driver unit pohonu. Víc ESP = stabilní cesty /dev/serial/by-id/... místo ttyACM*.
+    - name: drive
       enabled: false
       transport: serial
       device: /dev/ttyACM1
@@ -139,6 +141,39 @@ microros:
       mass: 5.0
       size: [0.5, 0.5, 0.1]
       offset_z: 0.0973
+
+    # Pohon (host): /cmd_vel → kinematika → rychlosti kol [rad/s] na driver units.
+    # Spouští se s bringup.chassis. Unit = ESP s N kanály (PID + enkodéry), kinematiku nezná.
+    #   cmd_topic   std_msgs/Float32MultiArray  rad/s na kanál (index = channel), 20 Hz, nuly po timeoutu
+    #   state_topic std_msgs/Int32MultiArray    kumulativní tiky na kanál; "" = unit bez zpětné vazby
+    # /odom jen když wheel_odom.enabled a kola mají zpětnou vazbu (ticks_per_rev > 0).
+    # mode: diff2 (wheel_l, wheel_r) | diff4 / mecanum (wheel_fl, wheel_fr, wheel_rl, wheel_rr)
+    # Kola lze rozdělit na víc units (např. přední a zadní ESP) — každé kolo má svůj unit + channel.
+    drive:
+      enabled: true
+      mode: mecanum
+      wheel_radius: 0.05       # m
+      track_width: 0.38        # m, vzdálenost levé a pravé řady kol (u diff4 efektivní)
+      wheelbase: 0.24          # m, přední–zadní náprava (mecanum)
+      max_wheel_speed: 10.0    # rad/s; nad limitem se zpomalí všechna kola poměrově
+      cmd_timeout_sec: 0.5
+      joint_states: true
+      units:
+        - name: main
+          cmd_topic: /drive/main/cmd
+          state_topic: /drive/main/state
+      wheels:
+        - { name: wheel_fl, unit: main, channel: 0, invert: false, ticks_per_rev: 1440 }
+        - { name: wheel_fr, unit: main, channel: 1, invert: true,  ticks_per_rev: 1440 }
+        - { name: wheel_rl, unit: main, channel: 2, invert: false, ticks_per_rev: 1440 }
+        - { name: wheel_rr, unit: main, channel: 3, invert: true,  ticks_per_rev: 1440 }
+      # Příklad diff2 s unit bez enkodérů:
+      # mode: diff2
+      # units:
+      #   - { name: main, cmd_topic: /drive/main/cmd, state_topic: "" }
+      # wheels:
+      #   - { name: wheel_l, unit: main, channel: 0 }
+      #   - { name: wheel_r, unit: main, channel: 1, invert: true }
 
     rmodus_module:
       mass: 2.0
@@ -157,28 +192,48 @@ microros:
       type: 'odom'
       topic: '/odom_lidar'
 
+    # Jméno v UI = name. Web ho spáruje s objeveným topicem.
+    # Jeden senzor může zůstat plochý blok (name + topic), víc kusů = items.
+    # Description URDF zatím čte jen plochý blok, ne items.
     imu:
       enabled: true
-      type: 'imu'
-      topic: '/imu/data'
-      frame_id: 'imu_link'
-      mount_parent_frame: 'rmodus_mount'
-      mount_offset: [0.0, 0.0, 0.0]
-      mount_rpy: [0.0, 0.0, 0.0]
-      offset: [0.056, 0.020, 0.015]
-      rpy: [0.0, 0.0, 0.0]
+      items:
+        - name: 'IMU'
+          enabled: true
+          type: 'imu'
+          topic: '/imu/data'
+          frame_id: 'imu_link'
+          mount_parent_frame: 'rmodus_mount'
+          mount_offset: [0.0, 0.0, 0.0]
+          mount_rpy: [0.0, 0.0, 0.0]
+          offset: [0.056, 0.020, 0.015]
+          rpy: [0.0, 0.0, 0.0]
 
     lidar:
       enabled: true
-      topic: '/scan'
-      frame_id: 'lidar_beam'
-      mount_parent_frame: 'rmodus_mount'
-      mount_offset: [0.0, 0.0, 0.0]
-      mount_rpy: [0.0, 0.0, 0.0]
-      offset: [0.005, 0.0, 0.2]
-      rpy: [0.0, 0.0, 0.0]
+      items:
+        - name: 'Přední LiDAR'
+          enabled: true
+          topic: '/scan'
+          frame_id: 'lidar_beam'
+          mount_parent_frame: 'rmodus_mount'
+          mount_offset: [0.0, 0.0, 0.0]
+          mount_rpy: [0.0, 0.0, 0.0]
+          offset: [0.005, 0.0, 0.2]
+          rpy: [0.0, 0.0, 0.0]
+        # - name: 'Zadní LiDAR'
+        #   enabled: true
+        #   topic: '/scan_rear'
+        #   frame_id: 'lidar_rear_beam'
+        #   mount_parent_frame: 'rmodus_mount'
+        #   mount_offset: [0.0, 0.0, 0.0]
+        #   mount_rpy: [0.0, 0.0, 3.1416]
+        #   offset: [-0.08, 0.0, 0.2]
+        #   rpy: [0.0, 0.0, 0.0]
 
-    # Driver (bringup.extras → neato_lidar). TF bere blok lidar: výše.
+    # Driver (bringup.extras → neato_lidar). Jméno v UI je lidar.items[].name.
+    # Druhý kus: neato_lidar.items, každý s vlastním port, topic a frame_id.
+    # name tady je jméno ROS uzlu (neato_front), ne popisek v UI.
     neato_lidar:
       enabled: true
       topic: /scan
@@ -190,17 +245,50 @@ microros:
       range_min: 0.05
       range_max: 5.0
 
+    # Rychlost: zdroje publikují na <zdroj>/cmd_vel, twist_mux vybere podle priority
+    # a výstup jde na /cmd_vel (to žere host: uart_output nebo cizí podvozek).
+    # Nikdo jiný než mux na /cmd_vel publikovat nesmí
+    # (teleop_twist_keyboard spouštěj s -r cmd_vel:=/teleop/cmd_vel).
+    # Zámek e_stop (priorita 255) blokuje vše pod 255; estop vstup (255) posílá nuly.
+    # Při bringup.estop: false se zámky vynechají.
+    cmd_mux:
+      enabled: true
+      use_stamped: false        # Twist; musí sedět s web.cmd.use_twist_stamped
+      output_topic: /cmd_vel
+      inputs:
+        - name: estop
+          topic: /estop/cmd_vel
+          priority: 255
+          timeout: 0.5
+        - name: teleop           # gamepad / klávesnice (teleop_twist_*)
+          topic: /teleop/cmd_vel
+          priority: 100
+          timeout: 0.5
+        - name: web
+          topic: /web/cmd_vel
+          priority: 90
+          timeout: 0.5
+        - name: nav              # Nav2 velocity_smoother
+          topic: /nav/cmd_vel
+          priority: 10
+          timeout: 0.5
+      locks:
+        - name: e_stop           # bez zprávy déle než timeout = zamčeno
+          topic: /rmodus/e_stop
+          priority: 255
+          timeout: 0.5
+
     uart_output:
       enabled: true
       port: '/dev/ttyUSB0'
       baudrate: 115200
-      cmd_vel_topic: '/cmd_vel_safe'
+      cmd_vel_topic: '/cmd_vel'
+      cmd_timeout_sec: 0.5      # bez příkazu → nuly na UART
 
     rmodus_estop:
       enabled: true
       publish_rate_hz: 50.0
-      cmd_vel_input_topic: /cmd_vel
-      cmd_vel_output_topic: /cmd_vel_safe
+      zero_cmd_topic: /estop/cmd_vel
       state_topic: /rmodus/e_stop
       request_topic: /rmodus/e_stop/request
       reset_topic: /rmodus/e_stop/reset
@@ -229,24 +317,30 @@ microros:
 
     bumpers:
       enabled: true
-      publish_rate_hz: 50.0
-      mcp_address: '0x20'
-      corner_pin_indices: [0, 1, 2, 3]
+      state_topic: /robot/bumpers/state
       estop_request:
         enabled: true
         request_topic: /rmodus/e_stop/request
         retrigger_while_contact: false
       items:
-        - name: 'front'
+        - name: front
           enabled: true
-          topic: '/bumper/front'
-          frame_id: 'bumper_front_contact'
-          mount_parent_frame: 'base_link'
+          pin: 0
+          topic: /bumper/front
+          frame_id: bumper_front_contact
+          mount_parent_frame: base_link
           mount_offset: [0.30, 0.0, 0.0]
           mount_rpy: [0.0, 0.0, 0.0]
           size: [0.02, 0.30, 0.05]
-          contact_offset: [0.02, 0.0, -0.025]
-          contact_rpy: [0.0, 0.0, 0.0]
+        - name: rear
+          enabled: true
+          pin: 1
+          topic: /bumper/rear
+          frame_id: bumper_rear_contact
+          mount_parent_frame: base_link
+          mount_offset: [-0.30, 0.0, 0.0]
+          mount_rpy: [0.0, 0.0, 3.14159]
+          size: [0.02, 0.30, 0.05]
 
     cliff_sensors:
       enabled: true

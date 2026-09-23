@@ -50,7 +50,7 @@ Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci
 ### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
 
 Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
-`FETCH_RF2O` (default 0), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
+`FETCH_RF2O` (default 0), `FETCH_TWIST_MUX` (default 1, apt), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
 `ENABLE_RMODUS_WEB_PROXY`, `ENABLE_RMODUS_MDNS`, `RMODUS_HOSTNAME`, etc.
 Lidar/IMU drivers (Neato, Xsens, …) are not fetched by install — handle outside / as needed.
 

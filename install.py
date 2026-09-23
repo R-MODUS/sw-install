@@ -50,6 +50,8 @@ DEFAULTS: dict[str, str] = {
     # micro-ROS agent (serial). Neni v ROS apt pro Jazzy — clone + build do ros2_ws.
     # Port neni soucast instalace; cte ho bringup z profilu (microros.items).
     "FETCH_MICROROS": "1",
+    # twist_mux z ROS apt (ros-<distro>-twist-mux). Konfig muxu je v profilu.
+    "FETCH_TWIST_MUX": "1",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
@@ -830,6 +832,48 @@ def _rmodus_pip_requirement_files(ws_src: Path) -> list[Path]:
     return sorted(out, key=lambda p: p.as_posix().lower())
 
 
+def _twist_mux_status(ros_distro: str) -> str:
+    if Path(f"/opt/ros/{ros_distro}/share/twist_mux/package.xml").is_file():
+        return f"nainstalovan (ros-{ros_distro}-twist-mux)"
+    return f"CHYBI - sudo apt install ros-{ros_distro}-twist-mux (bringup.cmd_mux se preskoci)"
+
+
+def _micro_ros_agent_status(ws_path: Path) -> str:
+    if (ws_path / "install" / "micro_ros_agent" / "share" / "micro_ros_agent" / "package.xml").is_file():
+        return f"postaven ({ws_path / 'install' / 'micro_ros_agent'})"
+    return "CHYBI - FETCH_MICROROS=1 a znovu install.py (bringup.microros se preskoci)"
+
+
+def _dialout_status(user: str) -> str:
+    """Clenstvi v /etc/group vs. aktivni v tomto prihlaseni (usermod plati az po relogin)."""
+    r = subprocess.run(["id", "-nG", user], capture_output=True, text=True)
+    configured = r.returncode == 0 and "dialout" in r.stdout.split()
+    try:
+        import grp
+
+        active = grp.getgrnam("dialout").gr_gid in os.getgroups()
+    except (ImportError, KeyError):
+        active = False
+    if active:
+        return f"{user} je v dialout (aktivni)"
+    if configured:
+        return f"{user} je v dialout, plati po novem prihlaseni (newgrp dialout / reboot)"
+    return f"{user} NENI v dialout - sudo usermod -aG dialout {user}"
+
+
+def _serial_by_id_ports() -> list[str]:
+    d = Path("/dev/serial/by-id")
+    if not d.is_dir():
+        return []
+    out: list[str] = []
+    for p in sorted(d.iterdir()):
+        try:
+            out.append(f"{p} -> {p.resolve()}")
+        except OSError:
+            out.append(str(p))
+    return out
+
+
 def _swapfile_exists(sp: str) -> bool:
     return subprocess.run(["sudo", "test", "-f", sp], capture_output=True).returncode == 0
 
@@ -978,6 +1022,7 @@ def _run_install() -> int:
         f"  microros: FETCH={c['FETCH_MICROROS']}  "
         "(agent do ros2_ws; porty az v profilu microros.items)"
     )
+    print(f"  twist_mux: FETCH={c['FETCH_TWIST_MUX']}  (apt ros-{c['ROS_DISTRO']}-twist-mux)")
     print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
     print(
         f"  web proxy / mDNS: ENABLE_RMODUS_WEB_PROXY={c.get('ENABLE_RMODUS_WEB_PROXY', '1')}  "
@@ -1038,6 +1083,16 @@ def _run_install() -> int:
         if not rosdep_sources.is_dir():
             _sudo(["rosdep", "init"], check=True)
         _run(["rosdep", "update"], check=True)
+
+    # [3b]
+    print("")
+    _banner(f"[3b] twist_mux: apt ros-{ros_distro}-twist-mux")
+    if _as_bool(c["FETCH_TWIST_MUX"]):
+        with _step("[3b] twist_mux", fatal=False):
+            _apt(["install", "-y", f"ros-{ros_distro}-twist-mux"], check=True)
+    else:
+        print("         Preskoceno (FETCH_TWIST_MUX=0).")
+        _steps.skip("[3b] twist_mux", "FETCH_TWIST_MUX=0")
 
     # [4]
     print("")
@@ -1266,6 +1321,7 @@ def _run_install() -> int:
             print(f"         uzivatel {user} pridan do: dialout, plugdev")
         else:
             print(f"         uzivatel {user} pridan do: dialout (skupina plugdev na systemu neni)")
+        print(f"         -> {_dialout_status(user)}")
         print("         -> Skupiny plati po novem prihlaseni nebo: newgrp dialout")
         print("         -> Seriovy HW musi byt pripojeny (ls /dev/ttyUSB* /dev/ttyACM*).")
 
@@ -1378,9 +1434,22 @@ def _run_install() -> int:
     print("                      rmodus net ...  (rmodus-network.service)")
     print("  * Overeni:          ros2 doctor")
     print(f"  * ROS domena / RMW: {ros_env}")
-    print("  * micro-ROS agent:  bringup.microros + microros.items v aktivnim profilu")
+    print(f"  * twist_mux:        {_twist_mux_status(ros_distro)}")
+    print("                      bringup.cmd_mux + cmd_mux v profilu; jen mux publikuje /cmd_vel")
+    print("  * Teleop:           ros2 run teleop_twist_keyboard teleop_twist_keyboard \\")
+    print("                        --ros-args -r cmd_vel:=/teleop/cmd_vel")
+    print(f"  * micro-ROS agent:  {_micro_ros_agent_status(ws_path)}")
+    print("                      bringup.microros + microros.items v aktivnim profilu")
     print("                      (firmware: serial 115200; vychozi /dev/ttyACM0)")
-    print("  * Seriove porty:    ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true")
+    print(f"  * dialout:          {_dialout_status(user)}")
+    print("  * Seriove porty:    vic ESP = ttyACM0/1 se po rebootu muzou prohodit;")
+    print("                      do microros.items[].device dej /dev/serial/by-id/...")
+    by_id = _serial_by_id_ports()
+    if by_id:
+        for line in by_id:
+            print(f"                        {line}")
+    else:
+        print("                        (zadne zarizeni v /dev/serial/by-id - pripoj ESP a: ls -l /dev/serial/by-id/)")
     print("")
     return 0
 
