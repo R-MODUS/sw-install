@@ -106,13 +106,15 @@ bringup:
   rf2o: false
   obstacle_cloud: false
   microros: false
-  # Vlastní launchy (drivers mimo jádro). Chybí-li balík → skip + log.
+  # Vlastní launchy. enabled: false polozku nespusti, zvlastni definice zustava.
   extras:
-    - package: neato_lidar
+    - enabled: true
+      package: neato_lidar
       launch: neato_lidar.launch.py
       args:
         config_file: $robot_yaml
-  # - path: ~/my_stack/extra.launch.py
+  # - enabled: false
+  #   path: ~/my_stack/extra.launch.py
 
 # Jedna deska = jedna položka a jeden agent. device je seriový port (ls /dev/ttyACM* /dev/ttyUSB*).
 # Firmware bumperů běží na 115200. Další desku přidej jako další item s jiným device.

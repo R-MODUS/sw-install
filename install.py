@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -92,6 +93,123 @@ def _banner(title: str) -> None:
     print("+" + "-" * w + "+")
     print("| " + (title[: w - 2]).ljust(w - 2) + " |")
     print("+" + "-" * w + "+")
+
+
+class _BlockFailed(Exception):
+    """Chyba kroku s vlastnim textem (bez CalledProcessError)."""
+
+    def __init__(self, detail: str, code: int = 1) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
+class _StepLog:
+    """Vysledek kroku instalace: ok / preskoceno / chyba. Souhrn az na konci."""
+
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, str, str]] = []
+        self._printed = False
+
+    def reset(self) -> None:
+        self.rows.clear()
+        self._printed = False
+
+    def add(self, name: str, status: str, detail: str = "") -> None:
+        self.rows.append((name, status, detail))
+
+    def skip(self, name: str, detail: str = "") -> None:
+        self.add(name, "preskoceno", detail)
+
+    def has_errors(self) -> bool:
+        return any(status == "chyba" for _, status, _ in self.rows)
+
+    def print_summary(self) -> None:
+        if self._printed:
+            return
+        self._printed = True
+        print("")
+        _banner("PREHLED")
+        if not self.rows:
+            print("  (zadne kroky)")
+            print("")
+            return
+        n_ok = n_skip = n_err = 0
+        for name, status, detail in self.rows:
+            if status == "ok":
+                n_ok += 1
+                label = "ok"
+            elif status == "preskoceno":
+                n_skip += 1
+                label = "preskoceno"
+            else:
+                n_err += 1
+                label = "chyba"
+            line = f"  {label:<12}{name}"
+            if detail:
+                line += f"  ({detail})"
+            print(line)
+        print("")
+        print(f"  proslo {n_ok}, preskoceno {n_skip}, chyba {n_err}")
+        if n_err:
+            print("  Selhane bloky lze zopakovat dalsim spustenim: python3 -u install.py")
+        print("")
+
+
+_steps = _StepLog()
+
+
+def _failure_detail(cmd: list[str] | str, code: int, *, limit: int | None = 90) -> str:
+    if isinstance(cmd, list):
+        text = " ".join(str(part) for part in cmd)
+    else:
+        text = str(cmd)
+    text = " ".join(text.split())
+    if limit is not None and len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return f"exit {code}: {text}"
+
+
+def _fail_step(
+    name: str,
+    detail: str,
+    *,
+    code: int,
+    fatal: bool,
+    log_detail: str | None = None,
+) -> None:
+    _steps.add(name, "chyba", detail)
+    print(f"CHYBA: {name} selhal ({log_detail or detail})", file=sys.stderr)
+    if fatal:
+        raise SystemExit(code)
+    print("         blok preskocen, instalace pokracuje.", file=sys.stderr)
+
+
+@contextmanager
+def _step(name: str, *, fatal: bool = False):
+    """Ok markne krok jako ok. Chyba prikazu: fatal ukonci beh, jinak jen zaznam a pokracovani."""
+    try:
+        yield
+    except subprocess.CalledProcessError as e:
+        _fail_step(
+            name,
+            _failure_detail(e.cmd, e.returncode),
+            code=e.returncode or 1,
+            fatal=fatal,
+            log_detail=_failure_detail(e.cmd, e.returncode, limit=None),
+        )
+    except _BlockFailed as e:
+        _fail_step(name, e.detail, code=e.code or 1, fatal=fatal)
+    except OSError as e:
+        _fail_step(name, str(e), code=1, fatal=fatal)
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 1
+        if code not in (0, None):
+            _steps.add(name, "chyba", f"exit {code}")
+            print(f"CHYBA: {name} selhal (exit {code})", file=sys.stderr)
+        raise
+    else:
+        _steps.add(name, "ok")
 
 
 def _run(
@@ -301,20 +419,24 @@ def _clone_micro_ros_setup(ws_path: Path, ros_distro: str) -> None:
 
 
 def _build_micro_ros_agent(ws_path: Path, ros_distro: str, build_env: dict[str, str]) -> None:
-    """create_agent_ws.sh + build_agent.sh. Vysledek je ve stejnem ros2_ws/install."""
+    """create_agent_ws.sh + build_agent.sh. Vysledek je ve stejnem ros2_ws/install.
+
+    create_agent_ws.sh spousti rosdep nad celym src/. ament_python nema rosdep klic
+    (stejne jako krok 6a1). Skript micro-ROS ho preskoci jen kdyz je v EXTERNAL_SKIP.
+    Create bezi i kdyz uz zdroje jsou: vcs --skip-existing, rosdep se zkusi znovu.
+    """
     agent_xml = ws_path / "src" / "uros" / "micro-ROS-Agent" / "micro_ros_agent" / "package.xml"
-    create = ""
-    if not agent_xml.is_file():
-        create = "ros2 run micro_ros_setup create_agent_ws.sh && "
-    else:
-        print(f"         zdroje agenta uz jsou ({agent_xml.parent}) - jen build")
+    if agent_xml.is_file():
+        print(f"         zdroje agenta uz jsou ({agent_xml.parent}) - create znovu (rosdep), pak build")
+    agent_env = dict(build_env)
+    agent_env["EXTERNAL_SKIP"] = "ament_python cmake_modules"
     _bash_script(
         f"source /opt/ros/{ros_distro}/setup.bash && "
         f"source {ws_path}/install/setup.bash && "
-        f"{create}"
+        "ros2 run micro_ros_setup create_agent_ws.sh && "
         "ros2 run micro_ros_setup build_agent.sh --parallel-workers 1",
         cwd=ws_path,
-        env=build_env,
+        env=agent_env,
     )
 
 
@@ -500,11 +622,7 @@ def _install_rmodus_network(deploy_path: Path, config_path: Path) -> None:
     script_src = deploy_path / "network" / "rmodus-network"
     unit_src = deploy_path / "systemd" / "rmodus-network.service"
     if not script_src.is_file() or not unit_src.is_file():
-        print(
-            f"         VAROVANI: chybi {script_src.name} nebo {unit_src.name}",
-            file=sys.stderr,
-        )
-        return
+        raise _BlockFailed(f"chybi {script_src.name} nebo {unit_src.name}")
     print("         apt: network-manager dnsmasq-base iw rfkill wireless-regdb wpasupplicant")
     _apt(["install", "-y", *_NETWORK_DEB_PKGS], check=True)
     _sudo(["systemctl", "enable", "NetworkManager"], check=False)
@@ -525,11 +643,7 @@ def _install_rmodus_web_proxy(deploy_path: Path) -> None:
     site_src = deploy_path / "nginx" / "rmodus-web.conf"
     map_src = deploy_path / "nginx" / "rmodus-websocket-map.conf"
     if not site_src.is_file() or not map_src.is_file():
-        print(
-            f"         VAROVANI: chybi nginx sablony v {deploy_path / 'nginx'}",
-            file=sys.stderr,
-        )
-        return
+        raise _BlockFailed(f"chybi nginx sablony v {deploy_path / 'nginx'}")
 
     print("         apt: nginx")
     _apt(["install", "-y", "nginx"], check=True)
@@ -549,18 +663,16 @@ def _install_rmodus_web_proxy(deploy_path: Path) -> None:
     _sudo(["ln", "-sfn", site_avail, site_enabled], check=True)
     test = _sudo(["nginx", "-t"], check=False)
     if test.returncode != 0:
-        print("         VAROVANI: nginx -t selhal — proxy neaktivuji", file=sys.stderr)
-        return
+        raise _BlockFailed("nginx -t selhal, proxy neaktivuji")
 
     _sudo(["systemctl", "enable", "nginx"], check=False)
     _sudo(["systemctl", "reload", "nginx"], check=False)
     # reload selze kdyz nginx jeste nebezi
     start = _sudo(["systemctl", "start", "nginx"], check=False)
     if start.returncode != 0:
-        print("         VAROVANI: systemctl start nginx selhal", file=sys.stderr)
-    else:
-        print("         nginx: http://<ip>/ → 127.0.0.1:8080 (WebSocket OK)")
-        print("         (rmodus_web nechte na web.port: 8080)")
+        raise _BlockFailed("systemctl start nginx selhal")
+    print("         nginx: http://<ip>/ → 127.0.0.1:8080 (WebSocket OK)")
+    print("         (rmodus_web nechte na web.port: 8080)")
 
 
 def _install_rmodus_mdns(hostname: str) -> None:
@@ -798,7 +910,7 @@ def _ensure_swap(c: dict) -> None:
     print("         swap: hotovo (overeni: swapon --show)")
 
 
-def main() -> int:
+def _run_install() -> int:
     repo_dir = Path(__file__).resolve().parent
     conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
     c = load_install_conf(conf_path)
@@ -820,7 +932,8 @@ def main() -> int:
 
     print("")
     _banner("[0] Strom adresaru ~/rmodus")
-    _ensure_rmodus_directory_layout(rmodus_root, deploy_path, ws_path)
+    with _step("[0] strom adresaru", fatal=True):
+        _ensure_rmodus_directory_layout(rmodus_root, deploy_path, ws_path)
     print(f"  {rmodus_root}/")
     print(f"    setup/     (sw-install: install.py, examples/, network/, systemd/)")
     print(f"    ros2_ws/   (colcon workspace, src/)")
@@ -828,11 +941,13 @@ def main() -> int:
     print(f"    data/      (kopie {_RMODUS_MANUAL_PDF} z korene sw-install)")
     print("")
     _banner(f"[0b] Manual: setup/{_RMODUS_MANUAL_PDF} -> ~/rmodus/data/")
-    _seed_rmodus_manual_from_setup(deploy_path, rmodus_root)
+    with _step("[0b] manual", fatal=False):
+        _seed_rmodus_manual_from_setup(deploy_path, rmodus_root)
     print("")
     _banner("[0c] Configs: rmodus-example vzdy aktualni; ostatni profily/active/network zachovat")
-    _seed_rmodus_configs(deploy_path, rmodus_root)
-    _remove_legacy_rmodus_config_cli()
+    with _step("[0c] configs", fatal=False):
+        _seed_rmodus_configs(deploy_path, rmodus_root)
+        _remove_legacy_rmodus_config_cli()
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
     print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
@@ -856,13 +971,18 @@ def main() -> int:
 
     _banner(f"RMODUS -- instalace ROS 2 {ros_distro} + workspace")
 
-    _ensure_swap(c)
+    if _as_bool(c["SWAP_ENABLE"]):
+        with _step("[1] swap", fatal=False):
+            _ensure_swap(c)
+    else:
+        _steps.skip("[1] swap", "SWAP_ENABLE=0")
 
     # [2]
     _banner("[2] Apt: aktualizace + curl, git, build-essential, pip (+ libbz2/bzip2 v jedne transakci)")
-    _apt(["update"], check=True)
-    _apt(["-y", "upgrade"], check=True)
-    _apt_install_base_toolchain()
+    with _step("[2] apt", fatal=True):
+        _apt(["update"], check=True)
+        _apt(["-y", "upgrade"], check=True)
+        _apt_install_base_toolchain()
 
     # [3]
     print("")
@@ -871,32 +991,34 @@ def main() -> int:
     ubuntu_codename = os_release.get("VERSION_CODENAME", "")
     if not ubuntu_codename:
         print("CHYBA: nelze zjistit VERSION_CODENAME z /etc/os-release", file=sys.stderr)
+        _steps.add("[3] ROS", "chyba", "chybi VERSION_CODENAME v /etc/os-release")
         return 1
 
-    _sudo(
-        [
-            "curl",
-            "-sSL",
-            "https://raw.githubusercontent.com/ros/rosdistro/master/ros.key",
-            "-o",
-            "/usr/share/keyrings/ros-archive-keyring.gpg",
-        ],
-        check=True,
-    )
-    deb_line = (
-        f"deb [arch={_dpkg_arch()} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] "
-        f"http://packages.ros.org/ros2/ubuntu {ubuntu_codename} main\n"
-    )
-    _sudo_write("/etc/apt/sources.list.d/ros2.list", deb_line)
-    _apt(["update"], check=True)
-    _apt(["install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"], check=True)
+    with _step("[3] ROS", fatal=True):
+        _sudo(
+            [
+                "curl",
+                "-sSL",
+                "https://raw.githubusercontent.com/ros/rosdistro/master/ros.key",
+                "-o",
+                "/usr/share/keyrings/ros-archive-keyring.gpg",
+            ],
+            check=True,
+        )
+        deb_line = (
+            f"deb [arch={_dpkg_arch()} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] "
+            f"http://packages.ros.org/ros2/ubuntu {ubuntu_codename} main\n"
+        )
+        _sudo_write("/etc/apt/sources.list.d/ros2.list", deb_line)
+        _apt(["update"], check=True)
+        _apt(["install", "-y", f"ros-{ros_distro}-ros-base", "ros-dev-tools"], check=True)
 
-    _bash_script(f"source /opt/ros/{ros_distro}/setup.bash && true")
+        _bash_script(f"source /opt/ros/{ros_distro}/setup.bash && true")
 
-    rosdep_sources = Path("/etc/ros/rosdep/sources.list.d")
-    if not rosdep_sources.is_dir():
-        _sudo(["rosdep", "init"], check=True)
-    _run(["rosdep", "update"], check=True)
+        rosdep_sources = Path("/etc/ros/rosdep/sources.list.d")
+        if not rosdep_sources.is_dir():
+            _sudo(["rosdep", "init"], check=True)
+        _run(["rosdep", "update"], check=True)
 
     # [4]
     print("")
@@ -906,54 +1028,62 @@ def main() -> int:
 
     if _as_bool(c["FETCH_SW_NAV_MODULE"]):
         print(f"  (4a) R-MODUS/sw-nav-module (vetev {c['SW_NAV_BRANCH']}) -> {c['SW_NAV_SPARSE_DIRS']}")
-        _sparse_clone_flat_multi(
-            "https://github.com/R-MODUS/sw-nav-module.git",
-            c["SW_NAV_BRANCH"],
-            snav_dir,
-            sw_nav_dirs,
-        )
-        _sparse_clone_fix_missing(snav_dir, sw_nav_dirs)
+        with _step("[4a] sw-nav-module", fatal=True):
+            _sparse_clone_flat_multi(
+                "https://github.com/R-MODUS/sw-nav-module.git",
+                c["SW_NAV_BRANCH"],
+                snav_dir,
+                sw_nav_dirs,
+            )
+            _sparse_clone_fix_missing(snav_dir, sw_nav_dirs)
     else:
         print("  (4a) sw-nav-module - preskoceno (FETCH_SW_NAV_MODULE=0)")
+        _steps.skip("[4a] sw-nav-module", "FETCH_SW_NAV_MODULE=0")
 
     if _as_bool(c["FETCH_RF2O"]):
         print("  (4b) rf2o_laser_odometry (volitelne, vetev ros2)")
-        if not (rf2o_dir / ".git").is_dir():
-            if rf2o_dir.exists():
-                shutil.rmtree(rf2o_dir)
-            rf2o_dir.parent.mkdir(parents=True, exist_ok=True)
-            _run(
-                [
-                    "git",
-                    "clone",
-                    "--depth",
-                    "1",
-                    "-b",
-                    "ros2",
-                    "https://github.com/MAPIRlab/rf2o_laser_odometry.git",
-                    str(rf2o_dir),
-                ],
-                check=True,
-            )
+        with _step("[4b] rf2o", fatal=False):
+            if not (rf2o_dir / ".git").is_dir():
+                if rf2o_dir.exists():
+                    shutil.rmtree(rf2o_dir)
+                rf2o_dir.parent.mkdir(parents=True, exist_ok=True)
+                _run(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "-b",
+                        "ros2",
+                        "https://github.com/MAPIRlab/rf2o_laser_odometry.git",
+                        str(rf2o_dir),
+                    ],
+                    check=True,
+                )
     else:
         print("  (4b) rf2o - preskoceno (FETCH_RF2O=0; optional feature)")
+        _steps.skip("[4b] rf2o", "FETCH_RF2O=0")
 
     if _as_bool(c["FETCH_MICROROS"]):
         print(f"  (4c) micro_ros_setup (vetev {ros_distro}) -> src/micro_ros_setup")
-        _clone_micro_ros_setup(ws_path, ros_distro)
+        with _step("[4c] micro_ros_setup", fatal=False):
+            _clone_micro_ros_setup(ws_path, ros_distro)
     else:
         print("  (4c) micro-ROS - preskoceno (FETCH_MICROROS=0)")
+        _steps.skip("[4c] micro_ros_setup", "FETCH_MICROROS=0")
 
     print("")
-    _banner("[4c] Configs: rmodus-example overwrite; ostatni profily/active/network zachovat")
-    _seed_rmodus_configs(deploy_path, rmodus_root)
-    _remove_legacy_rmodus_config_cli()
+    _banner("[4d] Configs: rmodus-example overwrite; ostatni profily/active/network zachovat")
+    with _step("[4d] configs", fatal=False):
+        _seed_rmodus_configs(deploy_path, rmodus_root)
+        _remove_legacy_rmodus_config_cli()
 
     if not _find_package_xml_under(ws_path / "src"):
         print(
             f"CHYBA: v {ws_path / 'src'} neni zadny package.xml - zapnete alespon jeden zdroj v conf.",
             file=sys.stderr,
         )
+        _steps.add("[4] workspace", "chyba", "chybi package.xml ve src/")
         return 1
 
     # [6a]
@@ -968,23 +1098,25 @@ def main() -> int:
                 f"{c['SW_NAV_BRANCH']}/rosdep/rmodus_custom.yaml"
             )
         tmp = Path("/etc/ros/rosdep/rmodus_custom.yaml.new")
-        try:
-            _sudo(["curl", "-fsSL", yaml_url, "-o", str(tmp)], check=True)
-            _sudo(["mv", str(tmp), "/etc/ros/rosdep/rmodus_custom.yaml"], check=True)
-            _sudo_write(
-                "/etc/ros/rosdep/sources.list.d/20-rmodus-custom.list",
-                "yaml file:///etc/ros/rosdep/rmodus_custom.yaml\n",
-            )
-            _run(["rosdep", "update"], check=True)
-            print(f"         Zdroj: {yaml_url}")
-        except subprocess.CalledProcessError:
-            print(
-                f"         VAROVANI: nelze stahnout {yaml_url} - pokracuji bez vlastnich rosdep klicu R-MODUS",
-                file=sys.stderr,
-            )
-            _sudo(["rm", "-f", str(tmp)], check=False)
+        with _step("[6a0] rosdep pravidla R-MODUS", fatal=False):
+            try:
+                _sudo(["curl", "-fsSL", yaml_url, "-o", str(tmp)], check=True)
+                _sudo(["mv", str(tmp), "/etc/ros/rosdep/rmodus_custom.yaml"], check=True)
+                _sudo_write(
+                    "/etc/ros/rosdep/sources.list.d/20-rmodus-custom.list",
+                    "yaml file:///etc/ros/rosdep/rmodus_custom.yaml\n",
+                )
+                _run(["rosdep", "update"], check=True)
+                print(f"         Zdroj: {yaml_url}")
+            except subprocess.CalledProcessError as e:
+                _sudo(["rm", "-f", str(tmp)], check=False)
+                raise _BlockFailed(
+                    f"nelze stahnout {yaml_url} (exit {e.returncode})",
+                    e.returncode or 1,
+                ) from e
     else:
         print("  (6a0) vlastni rosdep pravidla R-MODUS - preskoceno (INSTALL_RMODUS_ROSDEP_RULES=0)")
+        _steps.skip("[6a0] rosdep pravidla R-MODUS", "INSTALL_RMODUS_ROSDEP_RULES=0")
 
     print("  (6a1) rosdep install - systemove (a pip) zavislosti z package.xml")
     rosdep_cmd: list[str] = [
@@ -1001,7 +1133,8 @@ def main() -> int:
         rosdep_cmd.extend(["--skip-keys", skip])
     rosdep_env = os.environ.copy()
     rosdep_env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
-    _run(rosdep_cmd, cwd=ws_path, check=True, env=rosdep_env)
+    with _step("[6a1] rosdep install", fatal=True):
+        _run(rosdep_cmd, cwd=ws_path, check=True, env=rosdep_env)
 
     if _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
         print("  (6a2) pip install - rmodus_* s requirements-pip.txt (PEP 668: --user --break-system-packages)")
@@ -1020,15 +1153,18 @@ def main() -> int:
                 "         VAROVANI: pod src/ zadny rmodus_*/requirements-pip.txt - pip krok nic neinstaluje.",
                 file=sys.stderr,
             )
+            _steps.skip("[6a2] pip rmodus_*", "zadny requirements-pip.txt")
         for req in pip_reqs:
             try:
                 rel = req.relative_to(ws_path)
             except ValueError:
                 rel = req
             print(f"         pip -r {rel}")
-            _run([*pip_base, "-r", str(req)], check=True)
+            with _step(f"[6a2] pip {rel}", fatal=False):
+                _run([*pip_base, "-r", str(req)], check=True)
     elif not _as_bool(c["INSTALL_RMODUS_HW_PIP"]):
         print("  (6a2) pip rmodus_* - preskoceno (INSTALL_RMODUS_HW_PIP=0)")
+        _steps.skip("[6a2] pip rmodus_*", "INSTALL_RMODUS_HW_PIP=0")
 
     # [6b]/[6c]
     build_env = os.environ.copy()
@@ -1038,47 +1174,55 @@ def main() -> int:
     if _as_bool(c["FETCH_RF2O"]) and _as_bool(c["BUILD_RF2O_SEPARATE_PHASE"]):
         print("")
         _banner("[6b] colcon build - balicky ve workspace krome rf2o_laser_odometry")
-        _bash_script(
-            f"source /opt/ros/{ros_distro}/setup.bash && "
-            "colcon build --symlink-install --parallel-workers 1 --packages-skip rf2o_laser_odometry",
-            cwd=ws_path,
-            env=build_env,
-        )
+        with _step("[6b] colcon", fatal=True):
+            _bash_script(
+                f"source /opt/ros/{ros_distro}/setup.bash && "
+                "colcon build --symlink-install --parallel-workers 1 --packages-skip rf2o_laser_odometry",
+                cwd=ws_path,
+                env=build_env,
+            )
         print("")
         _banner("[6c] colcon build - pouze rf2o_laser_odometry (linker, setreni RAM)")
-        _bash_script(
-            f"source /opt/ros/{ros_distro}/setup.bash && "
-            "colcon build --symlink-install --parallel-workers 1 --packages-select rf2o_laser_odometry "
-            "--cmake-args "
-            "'-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-keep-memory' "
-            "'-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--no-keep-memory'",
-            cwd=ws_path,
-            env=build_env,
-        )
+        with _step("[6c] colcon rf2o", fatal=False):
+            _bash_script(
+                f"source /opt/ros/{ros_distro}/setup.bash && "
+                "colcon build --symlink-install --parallel-workers 1 --packages-select rf2o_laser_odometry "
+                "--cmake-args "
+                "'-DCMAKE_EXE_LINKER_FLAGS=-Wl,--no-keep-memory' "
+                "'-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--no-keep-memory'",
+                cwd=ws_path,
+                env=build_env,
+            )
     else:
         print("")
         _banner("[6b] colcon build - cely workspace (jedna faze)")
-        _bash_script(
-            f"source /opt/ros/{ros_distro}/setup.bash && colcon build --symlink-install --parallel-workers 1",
-            cwd=ws_path,
-            env=build_env,
-        )
+        with _step("[6b] colcon", fatal=True):
+            _bash_script(
+                f"source /opt/ros/{ros_distro}/setup.bash && colcon build --symlink-install --parallel-workers 1",
+                cwd=ws_path,
+                env=build_env,
+            )
+        if _as_bool(c["FETCH_RF2O"]):
+            _steps.skip("[6c] colcon rf2o", "BUILD_RF2O_SEPARATE_PHASE=0")
 
     if not (ws_path / "install" / "setup.bash").is_file():
         print(f"CHYBA: chybi {ws_path / 'install' / 'setup.bash'} - build nedobehl.", file=sys.stderr)
+        _steps.add("[6] setup.bash", "chyba", f"chybi {ws_path / 'install' / 'setup.bash'}")
         return 1
 
     if _as_bool(c["FETCH_MICROROS"]):
         print("")
         _banner("[6d] micro-ROS agent - create_agent_ws + build (serial, -j1)")
-        if ubuntu_codename != "noble":
-            print(
-                "CHYBA: micro_ros_setup (jazzy) stahuje zavislosti jako ubuntu:noble. "
-                f"Tenhle system je {ubuntu_codename or '?'}.",
-                file=sys.stderr,
-            )
-            return 1
-        _build_micro_ros_agent(ws_path, ros_distro, build_env)
+        with _step("[6d] micro-ROS agent", fatal=False):
+            if ubuntu_codename != "noble":
+                raise _BlockFailed(
+                    "micro_ros_setup (jazzy) stahuje zavislosti jako ubuntu:noble. "
+                    f"Tenhle system je {ubuntu_codename or '?'}."
+                )
+            _build_micro_ros_agent(ws_path, ros_distro, build_env)
+    else:
+        print("  [6d] micro-ROS agent - preskoceno (FETCH_MICROROS=0)")
+        _steps.skip("[6d] micro-ROS agent", "FETCH_MICROROS=0")
 
     # [7]
     print("")
@@ -1086,103 +1230,116 @@ def main() -> int:
     bashrc = home / ".bashrc"
     ros_env = deploy_path / "systemd" / "rmodus_ros.env"
     if Path(f"/opt/ros/{ros_distro}/setup.bash").is_file():
-        _update_bashrc_rmodus(bashrc, ros_distro, ws_path, ros_env)
+        with _step("[7] bashrc", fatal=False):
+            _update_bashrc_rmodus(bashrc, ros_distro, ws_path, ros_env)
     else:
         print(f"         VAROVANI: chybi /opt/ros/{ros_distro}/setup.bash - bashrc beze zmeny", file=sys.stderr)
+        _steps.add("[7] bashrc", "chyba", f"chybi /opt/ros/{ros_distro}/setup.bash")
 
     # [8]
     print("")
     _banner("[8] Prava k /dev/ttyUSB*, /dev/ttyACM* - skupiny dialout (a plugdev)")
-    _sudo(["usermod", "-aG", "dialout", user], check=True)
-    plugdev = subprocess.run(["getent", "group", "plugdev"], capture_output=True).returncode == 0
-    if plugdev:
-        _sudo(["usermod", "-aG", "plugdev", user], check=True)
-        print(f"         uzivatel {user} pridan do: dialout, plugdev")
-    else:
-        print(f"         uzivatel {user} pridan do: dialout (skupina plugdev na systemu neni)")
-    print("         -> Skupiny plati po novem prihlaseni nebo: newgrp dialout")
-    print("         -> Seriovy HW musi byt pripojeny (ls /dev/ttyUSB* /dev/ttyACM*).")
+    with _step("[8] dialout/plugdev", fatal=False):
+        _sudo(["usermod", "-aG", "dialout", user], check=True)
+        plugdev = subprocess.run(["getent", "group", "plugdev"], capture_output=True).returncode == 0
+        if plugdev:
+            _sudo(["usermod", "-aG", "plugdev", user], check=True)
+            print(f"         uzivatel {user} pridan do: dialout, plugdev")
+        else:
+            print(f"         uzivatel {user} pridan do: dialout (skupina plugdev na systemu neni)")
+        print("         -> Skupiny plati po novem prihlaseni nebo: newgrp dialout")
+        print("         -> Seriovy HW musi byt pripojeny (ls /dev/ttyUSB* /dev/ttyACM*).")
 
     # [9a]
     print("")
     _banner("[9a] systemd - rmodus-network.service (WiFi client/AP, enable bez startu)")
     if _as_bool(c["ENABLE_RMODUS_NETWORK"]):
-        _install_rmodus_network(deploy_path, network_yaml)
+        with _step("[9a] sit", fatal=False):
+            _install_rmodus_network(deploy_path, network_yaml)
     else:
         print("         Preskoceno (ENABLE_RMODUS_NETWORK=0).")
+        _steps.skip("[9a] sit", "ENABLE_RMODUS_NETWORK=0")
 
     # [9a2]
     print("")
     _banner("[9a2] nginx reverse proxy (:80 → :8080)")
     if _as_bool(c.get("ENABLE_RMODUS_WEB_PROXY", "1")):
-        _install_rmodus_web_proxy(deploy_path)
+        with _step("[9a2] nginx", fatal=False):
+            _install_rmodus_web_proxy(deploy_path)
     else:
         print("         Preskoceno (ENABLE_RMODUS_WEB_PROXY=0).")
+        _steps.skip("[9a2] nginx", "ENABLE_RMODUS_WEB_PROXY=0")
 
     # [9a3]
     print("")
     _banner("[9a3] mDNS / hostname (Avahi → *.local)")
     if _as_bool(c.get("ENABLE_RMODUS_MDNS", "1")):
-        _install_rmodus_mdns(c.get("RMODUS_HOSTNAME", "rmodus"))
+        with _step("[9a3] mDNS", fatal=False):
+            _install_rmodus_mdns(c.get("RMODUS_HOSTNAME", "rmodus"))
     else:
         print("         Preskoceno (ENABLE_RMODUS_MDNS=0).")
+        _steps.skip("[9a3] mDNS", "ENABLE_RMODUS_MDNS=0")
 
     # [9b]
     print("")
     _banner("[9b] systemd - jednotka rmodus.service (enable)")
     svc_src = deploy_path / "systemd" / "rmodus.service"
     ep_tpl = deploy_path / "systemd" / "rmodus_entrypoint.sh"
-    if _as_bool(c["ENABLE_SYSTEMD_RMODUS"]) and svc_src.is_file() and ep_tpl.is_file():
-        entry_path = _render_entrypoint_in_setup(deploy_path, ros_distro, ws_path, configs_root)
-        print(f"         entrypoint: {entry_path}")
-        stale_home_ep = home / "rmodus_entrypoint.sh"
-        if stale_home_ep.is_file() and stale_home_ep.resolve() != entry_path:
-            stale_home_ep.unlink()
-            print(f"         odstranena zastarala kopie: {stale_home_ep}")
-
-        svc_body = svc_src.read_text(encoding="utf-8")
-        svc_body = svc_body.replace("__SERVICE_USER__", user)
-        svc_body = svc_body.replace("__ENTRYPOINT__", str(entry_path))
-        _sudo_write("/etc/systemd/system/rmodus.service", svc_body)
-
-        _sudo(["systemctl", "daemon-reload"], check=True)
-        _sudo(["systemctl", "enable", "rmodus.service"], check=True)
-        print("         Sluzba rmodus povolena (enable). Start: sudo systemctl start rmodus")
-
-        # Passwordless restart/reboot for web UI / rmodus_config
-        sudoers = (
-            f"# R-MODUS: web UI / config_manager — restart bringup, reboot, network apply\n"
-            f"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart rmodus, "
-            f"/usr/bin/systemctl restart rmodus.service, "
-            f"/usr/bin/systemctl cat rmodus.service, "
-            f"/usr/bin/systemctl status rmodus.service, "
-            f"/usr/bin/systemctl reboot, "
-            f"/usr/bin/systemctl reboot --dry-run, "
-            f"/usr/local/sbin/rmodus-network\n"
-        )
-        _sudo_write("/etc/sudoers.d/rmodus-restart", sudoers)
-        _sudo(["chmod", "440", "/etc/sudoers.d/rmodus-restart"], check=True)
-        visudo = _sudo(["visudo", "-cf", "/etc/sudoers.d/rmodus-restart"], check=False)
-        if visudo.returncode != 0:
-            print("         VAROVANI: visudo -cf rmodus-restart selhal", file=sys.stderr)
-        else:
-            print(
-                f"         sudoers: {user} → systemctl restart rmodus, "
-                "reboot, rmodus-network (NOPASSWD)"
-            )
-    elif not _as_bool(c["ENABLE_SYSTEMD_RMODUS"]):
+    if not _as_bool(c["ENABLE_SYSTEMD_RMODUS"]):
         print("         Preskoceno (ENABLE_SYSTEMD_RMODUS=0).")
-    else:
+        _steps.skip("[9b] systemd rmodus", "ENABLE_SYSTEMD_RMODUS=0")
+    elif not svc_src.is_file() or not ep_tpl.is_file():
         print(f"         Chybi {svc_src} nebo {ep_tpl} v {deploy_path}.")
+        _steps.add("[9b] systemd rmodus", "chyba", f"chybi {svc_src.name} nebo {ep_tpl.name}")
+    else:
+        with _step("[9b] systemd rmodus", fatal=False):
+            entry_path = _render_entrypoint_in_setup(deploy_path, ros_distro, ws_path, configs_root)
+            print(f"         entrypoint: {entry_path}")
+            stale_home_ep = home / "rmodus_entrypoint.sh"
+            if stale_home_ep.is_file() and stale_home_ep.resolve() != entry_path:
+                stale_home_ep.unlink()
+                print(f"         odstranena zastarala kopie: {stale_home_ep}")
+
+            svc_body = svc_src.read_text(encoding="utf-8")
+            svc_body = svc_body.replace("__SERVICE_USER__", user)
+            svc_body = svc_body.replace("__ENTRYPOINT__", str(entry_path))
+            _sudo_write("/etc/systemd/system/rmodus.service", svc_body)
+
+            _sudo(["systemctl", "daemon-reload"], check=True)
+            _sudo(["systemctl", "enable", "rmodus.service"], check=True)
+            print("         Sluzba rmodus povolena (enable). Start: sudo systemctl start rmodus")
+
+            # Passwordless restart/reboot for web UI / rmodus_config
+            sudoers = (
+                f"# R-MODUS: web UI / config_manager — restart bringup, reboot, network apply\n"
+                f"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart rmodus, "
+                f"/usr/bin/systemctl restart rmodus.service, "
+                f"/usr/bin/systemctl cat rmodus.service, "
+                f"/usr/bin/systemctl status rmodus.service, "
+                f"/usr/bin/systemctl reboot, "
+                f"/usr/bin/systemctl reboot --dry-run, "
+                f"/usr/local/sbin/rmodus-network\n"
+            )
+            _sudo_write("/etc/sudoers.d/rmodus-restart", sudoers)
+            _sudo(["chmod", "440", "/etc/sudoers.d/rmodus-restart"], check=True)
+            visudo = _sudo(["visudo", "-cf", "/etc/sudoers.d/rmodus-restart"], check=False)
+            if visudo.returncode != 0:
+                print("         VAROVANI: visudo -cf rmodus-restart selhal", file=sys.stderr)
+            else:
+                print(
+                    f"         sudoers: {user} → systemctl restart rmodus, "
+                    "reboot, rmodus-network (NOPASSWD)"
+                )
 
     # [10]
     print("")
     _banner("[10] Overeni: source ROS + ros2_ws (stejne jako bashrc / entrypoint)")
-    _postinstall_verify_ros_sourced(ros_distro, ws_path, ros_env)
+    with _step("[10] overeni ROS", fatal=False):
+        _postinstall_verify_ros_sourced(ros_distro, ws_path, ros_env)
 
     # [11]
     print("")
-    _banner("HOTOVE")
+    _banner("HOTOVO s chybami" if _steps.has_errors() else "HOTOVE")
     print("  * Strom:            ~/rmodus/{setup,ros2_ws,configs,data}")
     print("  * Entrypoint:       ~/rmodus/setup/systemd/rmodus_entrypoint.sh")
     print("  * Profily:          ~/rmodus/configs/profiles/*.yaml")
@@ -1207,9 +1364,22 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def main() -> int:
+    _steps.reset()
+    code = 0
     try:
-        raise SystemExit(main())
+        code = _run_install()
     except subprocess.CalledProcessError as e:
-        print(f"CHYBA: prikaz selhal (exit {e.returncode}): {e.cmd}", file=sys.stderr)
-        raise SystemExit(e.returncode)
+        detail = _failure_detail(e.cmd, e.returncode, limit=None)
+        _steps.add("(nezachyceny prikaz)", "chyba", detail)
+        print(f"CHYBA: prikaz selhal ({detail})", file=sys.stderr)
+        code = e.returncode or 1
+    finally:
+        _steps.print_summary()
+    if code == 0 and _steps.has_errors():
+        return 1
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
