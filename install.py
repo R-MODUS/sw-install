@@ -52,6 +52,8 @@ DEFAULTS: dict[str, str] = {
     "FETCH_MICROROS": "1",
     # twist_mux z ROS apt (ros-<distro>-twist-mux). Konfig muxu je v profilu.
     "FETCH_TWIST_MUX": "1",
+    # Simulace: apt ros-<distro>-ros-gz (Gazebo Harmonic + ros_gz_*) a rmodus_gazebo ze sw-nav-module.
+    "SIM": "0",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
@@ -838,6 +840,19 @@ def _twist_mux_status(ros_distro: str) -> str:
     return f"CHYBI - sudo apt install ros-{ros_distro}-twist-mux (bringup.cmd_mux se preskoci)"
 
 
+def _sim_status(ros_distro: str, ws_path: Path) -> str:
+    gz_ok = Path(f"/opt/ros/{ros_distro}/share/ros_gz_sim/package.xml").is_file()
+    pkg_ok = (ws_path / "install" / "rmodus_gazebo" / "share" / "rmodus_gazebo" / "package.xml").is_file()
+    if gz_ok and pkg_ok:
+        return "Gazebo (ros_gz) + rmodus_gazebo nainstalovano"
+    missing = []
+    if not gz_ok:
+        missing.append(f"ros-{ros_distro}-ros-gz")
+    if not pkg_ok:
+        missing.append("rmodus_gazebo")
+    return f"CHYBI {', '.join(missing)} - SIM=1 a znovu install.py"
+
+
 def _micro_ros_agent_status(ws_path: Path) -> str:
     if (ws_path / "install" / "micro_ros_agent" / "share" / "micro_ros_agent" / "package.xml").is_file():
         return f"postaven ({ws_path / 'install' / 'micro_ros_agent'})"
@@ -987,6 +1002,9 @@ def _run_install() -> int:
     rf2o_dir = ws_path / "src" / "rf2o_laser_odometry"
     snav_dir = ws_path / "src" / "sw_nav_module"
     sw_nav_dirs = c["SW_NAV_SPARSE_DIRS"].split()
+    sim = _as_bool(c["SIM"])
+    if sim and "rmodus_gazebo" not in sw_nav_dirs:
+        sw_nav_dirs.append("rmodus_gazebo")
     network_yaml = rmodus_root / "configs" / "network.yaml"
     configs_root = rmodus_root / "configs"
 
@@ -1013,7 +1031,7 @@ def _run_install() -> int:
         _remove_legacy_rmodus_config_cli()
     print(f"  Konfig: {conf_path}  ({'soubor' if conf_path.is_file() else 'vychozi DEFAULTS'})")
     print(f"  swap:   ENABLE={c['SWAP_ENABLE']}  SIZE_MB={c['SWAP_SIZE_MB']}  PATH={c['SWAP_PATH']}")
-    print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {c['SW_NAV_SPARSE_DIRS']}")
+    print(f"  sw-nav: FETCH={c['FETCH_SW_NAV_MODULE']}  slozky: {' '.join(sw_nav_dirs)}")
     print(
         f"  rf2o:   FETCH={c['FETCH_RF2O']}  (volitelne; default 0) "
         f"samostatna faze={c['BUILD_RF2O_SEPARATE_PHASE']}"
@@ -1023,6 +1041,7 @@ def _run_install() -> int:
         "(agent do ros2_ws; porty az v profilu microros.items)"
     )
     print(f"  twist_mux: FETCH={c['FETCH_TWIST_MUX']}  (apt ros-{c['ROS_DISTRO']}-twist-mux)")
+    print(f"  sim:    SIM={c['SIM']}  (apt ros-{c['ROS_DISTRO']}-ros-gz + rmodus_gazebo)")
     print(f"  network: ENABLE_RMODUS_NETWORK={c['ENABLE_RMODUS_NETWORK']}")
     print(
         f"  web proxy / mDNS: ENABLE_RMODUS_WEB_PROXY={c.get('ENABLE_RMODUS_WEB_PROXY', '1')}  "
@@ -1093,6 +1112,16 @@ def _run_install() -> int:
     else:
         print("         Preskoceno (FETCH_TWIST_MUX=0).")
         _steps.skip("[3b] twist_mux", "FETCH_TWIST_MUX=0")
+
+    # [3c]
+    print("")
+    _banner(f"[3c] sim: apt ros-{ros_distro}-ros-gz (Gazebo + ros_gz_sim/bridge/interfaces)")
+    if sim:
+        with _step("[3c] Gazebo", fatal=False):
+            _apt(["install", "-y", f"ros-{ros_distro}-ros-gz"], check=True)
+    else:
+        print("         Preskoceno (SIM=0).")
+        _steps.skip("[3c] Gazebo", "SIM=0")
 
     # [4]
     print("")
@@ -1438,6 +1467,9 @@ def _run_install() -> int:
     print("                      bringup.cmd_mux + cmd_mux v profilu; jen mux publikuje /cmd_vel")
     print("  * Teleop:           ros2 run teleop_twist_keyboard teleop_twist_keyboard \\")
     print("                        --ros-args -r cmd_vel:=/teleop/cmd_vel")
+    if sim:
+        print(f"  * Simulace:         {_sim_status(ros_distro, ws_path)}")
+        print("                      ros2 launch rmodus_gazebo sim.launch.py")
     print(f"  * micro-ROS agent:  {_micro_ros_agent_status(ws_path)}")
     print("                      bringup.microros + microros.items v aktivnim profilu")
     print("                      (firmware: serial 115200; vychozi /dev/ttyACM0)")
