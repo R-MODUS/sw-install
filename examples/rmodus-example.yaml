@@ -101,6 +101,7 @@ bringup:
   web: true
   rviz: false
   sim: false
+  sim_gui: false         # platí jen při sim: true; true otevře okno gz sim
   localization: false
   navigation: false
   slam: false
