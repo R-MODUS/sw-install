@@ -1,0 +1,33 @@
+# Předvolba sim. Spuštění: python3 -u install.py sim
+# Simulace: Gazebo + podvozek + navigace + web. Bez HW krabičky a micro-ROS.
+# 1 / true / yes = zapnuto, 0 / false = vypnuto.
+
+ROS_DISTRO: jazzy
+
+RMODUS_ROOT: ~/rmodus
+WS_PATH: ~/rmodus/ros2_ws
+DEPLOY_PATH: ~/rmodus/setup
+
+FETCH_SW_NAV_MODULE: 1
+SW_NAV_BRANCH: main
+SW_NAV_SPARSE_DIRS: "rmodus_interface rmodus_description rmodus_chassis rmodus_bringup rmodus_config rmodus_web rmodus_localization rmodus_navigation rmodus_gazebo"
+
+FETCH_RF2O: 0
+BUILD_RF2O_SEPARATE_PHASE: 1
+FETCH_TWIST_MUX: 1
+FETCH_MICROROS: 0
+SIM: 1
+
+ENABLE_RMODUS_NETWORK: 1
+ENABLE_SYSTEMD_RMODUS: 1
+ENABLE_RMODUS_WEB_PROXY: 1
+ENABLE_RMODUS_MDNS: 1
+RMODUS_HOSTNAME: rmodus
+
+INSTALL_RMODUS_ROSDEP_RULES: 1
+RMODUS_ROSDEP_YAML_URL: ""
+INSTALL_RMODUS_HW_PIP: 0
+
+SWAP_ENABLE: 1
+SWAP_SIZE_MB: 4096
+SWAP_PATH: /swapfile

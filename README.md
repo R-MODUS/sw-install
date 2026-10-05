@@ -1,6 +1,30 @@
 # Instalace
 
-Tři kroky: stáhnout setup, upravit `install.yaml`, spustit instalaci.
+Dvě cesty. Předvolba stáhne setup a hned instaluje podle jména. Vlastní nejdřív stáhne soubory, pak se upraví `install.yaml`.
+
+## Předvolba
+
+`web`, `sim`, `robot` nebo `full` — soubory `presets/*.yaml`.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/R-MODUS/sw-install/main/bootstrap.sh | bash -s -- robot
+```
+
+| jméno | co stáhne |
+|---|---|
+| `web` | jen web: UI, profily, model |
+| `sim` | Gazebo, podvozek, navigace, web; bez HW krabičky |
+| `robot` | reálný robot: HW, podvozek, navigace, web, micro-ROS; bez Gazebo |
+| `full` | robot + Gazebo + rf2o |
+
+Po klonu totéž bez curl:
+
+```bash
+cd ~/rmodus/setup
+python3 -u install.py sim
+```
+
+## Vlastní konfigurace
 
 ### 1. Stáhnout setup
 
@@ -28,7 +52,7 @@ python3 -u install.py
 
 ```
 ~/rmodus/
-  setup/          sw-install (`install.py`, `install.yaml`, `examples/`, `network/`, `systemd/`)
+  setup/          sw-install (`install.py`, `install.yaml`, `presets/`, `examples/`, `network/`, `systemd/`)
   ros2_ws/        colcon workspace (src/, install/)
   configs/
     profiles/     robot profiles `*.yaml` (template: `setup/examples/rmodus-example.yaml`)
@@ -59,9 +83,9 @@ python3 -u install.py
 
 Instalaci spusťte pod uživatelem **admin** (systemd doplní `User=` při instalaci).
 
-### Konfigurace (`install.yaml` vedle `install.py`)
+### Konfigurace
 
-Upravuje se **`~/rmodus/setup/install.yaml`**, ne `install.py`. V Pythonu jsou jen `DEFAULTS` pro chybějící klíč.
+Předvolba je `presets/<jméno>.yaml`. Vlastní úpravy jsou v `~/rmodus/setup/install.yaml`. `install.py` má jen `DEFAULTS` pro chybějící klíč.
 `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
 `FETCH_RF2O` (default 0), `FETCH_TWIST_MUX` (default 1, apt),
 `SIM` (default 0; `1` = apt `ros-<distro>-ros-gz` + `rmodus_gazebo` ze sw-nav-module), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
@@ -86,7 +110,7 @@ rmodus net stop|start|status|log                      # rmodus-network.service
 
 Entrypoint pro systemd: **`~/rmodus/setup/systemd/rmodus_entrypoint.sh`** (ne kopie v `~/`).
 
-Ruční přeinstalace (záloha `install.yaml`, `reset --hard` ho přepíše):
+Ruční přeinstalace. `git reset --hard` přepíše i upravený `install.yaml` (předvolby v `presets/` jsou v gitu, ty se obnoví):
 
 ```bash
 cd ~/rmodus/setup
@@ -95,3 +119,5 @@ git fetch origin && git reset --hard origin/main
 cp -a /tmp/rmodus-install.yaml.bak install.yaml
 python3 -u install.py
 ```
+
+Předvolba po aktualizaci: `python3 -u install.py robot` (nebo `web` / `sim` / `full`).

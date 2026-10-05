@@ -117,11 +117,44 @@ def load_install_conf(path: Path) -> dict[str, str]:
     return cfg
 
 
-def _install_config_path(repo_dir: Path) -> Path:
-    env = os.environ.get("RMODUS_INSTALL_CONF", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return repo_dir / _INSTALL_YAML
+def _print_usage() -> None:
+    print(
+        "python3 -u install.py [predvolba|soubor.yaml]\n"
+        "  bez argumentu     vlastní install.yaml vedle install.py\n"
+        "  web               jen web (UI, profily, model)\n"
+        "  sim               simulace (Gazebo, bez HW krabičky)\n"
+        "  robot             reálný robot (HW + web, bez Gazebo)\n"
+        "  full              vše: robot + Gazebo + rf2o\n"
+        "  cesta.yaml        libovolný plochý yaml (překryje DEFAULTS)"
+    )
+
+
+def _resolve_install_config(repo_dir: Path, arg: str | None) -> Path:
+    """CLI argument, jinak RMODUS_INSTALL_CONF, jinak install.yaml."""
+    if arg is None:
+        env = os.environ.get("RMODUS_INSTALL_CONF", "").strip()
+        if env:
+            path = Path(env).expanduser()
+            if not path.is_file():
+                print(f"CHYBA: RMODUS_INSTALL_CONF neexistuje: {path}", file=sys.stderr)
+                raise SystemExit(2)
+            return path
+        return repo_dir / _INSTALL_YAML
+
+    for candidate in (
+        Path(arg).expanduser(),
+        repo_dir / arg,
+        repo_dir / "presets" / f"{arg}.yaml",
+    ):
+        if candidate.is_file():
+            return candidate
+
+    names = sorted(p.stem for p in (repo_dir / "presets").glob("*.yaml"))
+    print(f"CHYBA: neznama predvolba nebo soubor: {arg}", file=sys.stderr)
+    if names:
+        print(f"  predvolby: {', '.join(names)}", file=sys.stderr)
+    print("  vlastni:   python3 -u install.py", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _banner(title: str) -> None:
@@ -1021,9 +1054,7 @@ def _ensure_swap(c: dict) -> None:
     print("         swap: hotovo (overeni: swapon --show)")
 
 
-def _run_install() -> int:
-    repo_dir = Path(__file__).resolve().parent
-    conf_path = _install_config_path(repo_dir)
+def _run_install(conf_path: Path) -> int:
     c = load_install_conf(conf_path)
 
     rmodus_root, deploy_path, ws_path = _resolve_rmodus_paths(c)
@@ -1520,10 +1551,21 @@ def _run_install() -> int:
 
 
 def main() -> int:
+    repo_dir = Path(__file__).resolve().parent
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        _print_usage()
+        return 0
+    if len(args) > 1:
+        print("CHYBA: nejvyse jeden argument (predvolba nebo cesta k yaml).", file=sys.stderr)
+        _print_usage()
+        return 2
+    conf_path = _resolve_install_config(repo_dir, args[0] if args else None)
+
     _steps.reset()
     code = 0
     try:
-        code = _run_install()
+        code = _run_install(conf_path)
     except subprocess.CalledProcessError as e:
         detail = _failure_detail(e.cmd, e.returncode, limit=None)
         _steps.add("(nezachyceny prikaz)", "chyba", detail)

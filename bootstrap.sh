@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stahne sw-install do ~/rmodus/setup a doinstaluje python3 / git.
-# install.py nespousti: driv se upravi install.yaml.
+# S argumentem (web|sim|robot|full) hned spusti install.py s tou predvolbou.
+# Bez argumentu jen stahne setup — pak bud vlastni install.yaml, nebo predvolba.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -56,7 +57,16 @@ if [[ ! -f "${INSTALL_PY}" ]]; then
   exit 1
 fi
 chmod +x "${INSTALL_PY}" 2>/dev/null || true
+
+PRESET="${1:-${RMODUS_PRESET:-}}"
+if [[ -n "${PRESET}" ]]; then
+  echo ""
+  echo "[bootstrap] Setup je v ${REPO_DIR}. Predvolba: ${PRESET}"
+  cd "${REPO_DIR}"
+  exec python3 -u "${INSTALL_PY}" "${PRESET}"
+fi
+
 echo ""
 echo "[bootstrap] Setup je v ${REPO_DIR}."
-echo "[bootstrap] 1) Uprav ${REPO_DIR}/install.yaml"
-echo "[bootstrap] 2) cd ${REPO_DIR} && python3 -u install.py"
+echo "[bootstrap] Predvolba:  cd ${REPO_DIR} && python3 -u install.py web|sim|robot|full"
+echo "[bootstrap] Vlastni:    uprav ${REPO_DIR}/install.yaml && python3 -u install.py"
