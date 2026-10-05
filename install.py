@@ -35,33 +35,24 @@ _force_line_buffered_stdio()
 os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
 
 
+# Záloha, když v install.yaml klíč chybí. Upravuje se install.yaml vedle tohoto souboru.
 DEFAULTS: dict[str, str] = {
     "ROS_DISTRO": "jazzy",
     "RMODUS_ROOT": str(Path.home() / "rmodus"),
     "WS_PATH": str(Path.home() / "rmodus" / "ros2_ws"),
     "DEPLOY_PATH": str(Path.home() / "rmodus" / "setup"),
     "FETCH_SW_NAV_MODULE": "1",
-    # Jádro R-MODUS (+ localization/navigation až je stáhneš přes conf / později profil).
-    # Lidar/IMU drivery (neato, xsens, …) sem nepatří — mimo bringup / optional.
     "SW_NAV_SPARSE_DIRS": "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display rmodus_config rmodus_bringup rmodus_chassis rmodus_localization rmodus_navigation",
     "SW_NAV_BRANCH": "main",
-    # Volitelný third-party odom (default off). Později: dle profilu / optional_depend.
     "FETCH_RF2O": "0",
-    # micro-ROS agent (serial). Neni v ROS apt pro Jazzy — clone + build do ros2_ws.
-    # Port neni soucast instalace; cte ho bringup z profilu (microros.items).
     "FETCH_MICROROS": "1",
-    # twist_mux z ROS apt (ros-<distro>-twist-mux). Konfig muxu je v profilu.
     "FETCH_TWIST_MUX": "1",
-    # Simulace: apt ros-<distro>-ros-gz (Gazebo Harmonic + ros_gz_*) a rmodus_gazebo ze sw-nav-module.
     "SIM": "0",
     "BUILD_RF2O_SEPARATE_PHASE": "1",
     "ENABLE_RMODUS_NETWORK": "1",
     "ENABLE_SYSTEMD_RMODUS": "1",
-    # nginx :80 → 127.0.0.1:8080 (rmodus_web). URL bez portu.
     "ENABLE_RMODUS_WEB_PROXY": "1",
-    # avahi → http://rmodus.local  (install defaultne nastavi hostname)
     "ENABLE_RMODUS_MDNS": "1",
-    # Default rmodus → http://rmodus.local. Prazdne = hostname nemenit.
     "RMODUS_HOSTNAME": "rmodus",
     "INSTALL_RMODUS_ROSDEP_RULES": "1",
     "RMODUS_ROSDEP_YAML_URL": "",
@@ -71,24 +62,66 @@ DEFAULTS: dict[str, str] = {
     "SWAP_PATH": "/swapfile",
 }
 
+_INSTALL_YAML = "install.yaml"
 
-def load_install_conf(path: Path) -> dict[str, str]:
-    cfg = dict(DEFAULTS)
-    if not path.is_file():
-        return cfg
-    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
-    for raw in path.read_text(encoding="utf-8").splitlines():
+
+def _parse_scalar(raw: str) -> str:
+    val = raw.strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+        return val[1:-1]
+    if " #" in val:
+        val = val.split(" #", 1)[0].rstrip()
+    return val
+
+
+def _parse_flat_yaml(text: str, *, label: str) -> dict[str, str]:
+    """Ploché klíče (KEY: hodnota). Bez vnoření, stačí to bez PyYAML."""
+    out: dict[str, str] = {}
+    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$")
+    for index, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        m = key_re.match(line)
-        if not m:
+        match = key_re.match(line)
+        if not match:
+            print(f"VAROVANI: {label} radek {index} preskocen: {line}", file=sys.stderr)
             continue
-        key, val = m.group(1), m.group(2).strip()
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        cfg[key] = val
+        out[match.group(1)] = _parse_scalar(match.group(2))
+    return out
+
+
+def _parse_env_conf(text: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    key_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = key_re.match(line)
+        if not match:
+            continue
+        out[match.group(1)] = _parse_scalar(match.group(2))
+    return out
+
+
+def load_install_conf(path: Path) -> dict[str, str]:
+    """DEFAULTS + překrytí ze souboru. Chybějící klíč zůstane default."""
+    cfg = dict(DEFAULTS)
+    if not path.is_file():
+        return cfg
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        cfg.update(_parse_flat_yaml(text, label=path.name))
+    else:
+        cfg.update(_parse_env_conf(text))
     return cfg
+
+
+def _install_config_path(repo_dir: Path) -> Path:
+    env = os.environ.get("RMODUS_INSTALL_CONF", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return repo_dir / _INSTALL_YAML
 
 
 def _banner(title: str) -> None:
@@ -990,7 +1023,7 @@ def _ensure_swap(c: dict) -> None:
 
 def _run_install() -> int:
     repo_dir = Path(__file__).resolve().parent
-    conf_path = Path(os.environ.get("RMODUS_INSTALL_CONF", repo_dir / "rmodus_install.conf"))
+    conf_path = _install_config_path(repo_dir)
     c = load_install_conf(conf_path)
 
     rmodus_root, deploy_path, ws_path = _resolve_rmodus_paths(c)

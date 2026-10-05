@@ -1,16 +1,34 @@
-# one-liner
+# Instalace
+
+Tři kroky: stáhnout setup, upravit `install.yaml`, spustit instalaci.
+
+### 1. Stáhnout setup
 
 ```bash
-sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubusercontent.com/R-MODUS/sw-install/main/bootstrap.sh | bash
+sudo apt update && sudo apt install -y ca-certificates git python3
+git clone https://github.com/R-MODUS/sw-install.git ~/rmodus/setup
 ```
 
-(Pri potizich s vystupem zkuste `curl -SL` bez `-s`, at vidite pripadne chyby ze stazeni.)
+### 2. Upravit konfiguraci
 
-### Strom na Linuxu (po bootstrap / install)
+```bash
+nano ~/rmodus/setup/install.yaml
+```
+
+Klíč, který v yaml chybí, vezme `install.py` ze svých `DEFAULTS`.
+
+### 3. Instalovat
+
+```bash
+cd ~/rmodus/setup
+python3 -u install.py
+```
+
+### Strom na Linuxu (po instalaci)
 
 ```
 ~/rmodus/
-  setup/          sw-install (`install.py`, `examples/`, `network/`, `systemd/`)
+  setup/          sw-install (`install.py`, `install.yaml`, `examples/`, `network/`, `systemd/`)
   ros2_ws/        colcon workspace (src/, install/)
   configs/
     profiles/     robot profily `*.yaml` (vzor: `setup/examples/rmodus-example.yaml`)
@@ -30,30 +48,25 @@ sudo apt update && sudo apt install -y curl && curl -sSL https://raw.githubuserc
 - Sprava profilu: ROS balicek **`rmodus_config`** (`bringup.config`, services `/rmodus/config/*`; web UI / `ros2`).
 - Web UI: blok **`web:`** v aktivnim robot profilu.
 
-Bootstrap i `install.py` krok **[0]** tyto slozky vytvori na zacatku.
+`install.py` krok **[0]** tyto složky vytvoří na začátku.
 
-### Log / vystup z `install.py` v konzoli
+### Log / výstup z `install.py` v konzoli
 
-- Bootstrap uz spousti **`python3 -u`** a exportuje **`PYTHONUNBUFFERED=1`** - vystup by mel jit na obrazovku hned.
-- **Zaroven do souboru** (a porad na konzoli):  
-  `curl -sSL .../bootstrap.sh | tee /tmp/rmodus-bootstrap.log | bash`
-- **Jen instalator** po klonu:  
+- **Zároveň do souboru** (a pořád na konzoli):  
   `cd ~/rmodus/setup && PYTHONUNBUFFERED=1 python3 -u install.py 2>&1 | tee ~/rmodus-install.log`
 
-**Dulezite:** na vetvi **`main`** musi byt **`install.py`** v repu. Po pushnuti na Pi:  
-`cd ~/rmodus/setup && git fetch origin && git reset --hard origin/main`
+**Důležité:** na větvi **`main`** musí být **`install.py`** i **`install.yaml`**. `git reset --hard` přepíše i upravený `install.yaml` — předtím si ho schovejte.
 
-**Bootstrap** klonuje repozitar do **`~/rmodus/setup`**, doinstaluje `python3` / `git` a spusti **`python3 -u install.py`**.
+Instalaci spusťte pod uživatelem **admin** (systemd doplní `User=` při instalaci).
 
-Instalaci spustte pod uzivatelem **admin** (systemd doplni `User=` pri instalaci).
+### Konfigurace (`install.yaml` vedle `install.py`)
 
-### Konfigurace (`rmodus_install.conf` v `~/rmodus/setup`)
-
-Volitelne: `RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
+Upravuje se **`~/rmodus/setup/install.yaml`**, ne `install.py`. V Pythonu jsou jen `DEFAULTS` pro chybějící klíč.
+`RMODUS_ROOT`, `DEPLOY_PATH`, `WS_PATH`, `SWAP_*`, `SW_NAV_SPARSE_DIRS`,
 `FETCH_RF2O` (default 0), `FETCH_TWIST_MUX` (default 1, apt),
 `SIM` (default 0; `1` = apt `ros-<distro>-ros-gz` + `rmodus_gazebo` ze sw-nav-module), `INSTALL_RMODUS_HW_PIP`, rosdep, `ENABLE_RMODUS_NETWORK`,
-`ENABLE_RMODUS_WEB_PROXY`, `ENABLE_RMODUS_MDNS`, `RMODUS_HOSTNAME`, atd.
-Lidar/IMU drivery (Neato, Xsens, …) install netaha — resit mimo / podle potreby.
+`ENABLE_RMODUS_WEB_PROXY`, `ENABLE_RMODUS_MDNS`, `RMODUS_HOSTNAME`.
+Lidar/IMU drivery (Neato, Xsens, …) install nestahuje.
 
 ### Po instalaci
 
@@ -73,10 +86,12 @@ rmodus net stop|start|status|log                      # rmodus-network.service
 
 Entrypoint pro systemd: **`~/rmodus/setup/systemd/rmodus_entrypoint.sh`** (ne kopie v `~/`).
 
-Rucni preinstalace:
+Ruční přeinstalace (záloha `install.yaml`, `reset --hard` ho přepíše):
 
 ```bash
 cd ~/rmodus/setup
+cp -a install.yaml /tmp/rmodus-install.yaml.bak
 git fetch origin && git reset --hard origin/main
+cp -a /tmp/rmodus-install.yaml.bak install.yaml
 python3 -u install.py
 ```

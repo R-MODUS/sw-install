@@ -1,0 +1,42 @@
+# Instalace R-MODUS. Uprav tento soubor, pak: python3 -u install.py
+# Klíč, který tu chybí, vezme install.py ze svých DEFAULTS.
+# 1 / true / yes = zapnuto, 0 / false = vypnuto.
+
+ROS_DISTRO: jazzy
+
+# ~/rmodus/{setup,ros2_ws}
+RMODUS_ROOT: ~/rmodus
+WS_PATH: ~/rmodus/ros2_ws
+DEPLOY_PATH: ~/rmodus/setup
+
+# Sparse checkout sw-nav-module. Lidar/IMU drivery sem nepatří.
+FETCH_SW_NAV_MODULE: 1
+SW_NAV_BRANCH: main
+SW_NAV_SPARSE_DIRS: "rmodus_hw rmodus_web rmodus_interface rmodus_description rmodus_uart_output rmodus_estop rmodus_bumper rmodus_cliff_sensor rmodus_flow_sensor rmodus_display rmodus_config rmodus_bringup rmodus_chassis rmodus_localization rmodus_navigation"
+
+# Volitelný rf2o (default vypnuto). twist_mux je apt balíček.
+FETCH_RF2O: 0
+BUILD_RF2O_SEPARATE_PHASE: 1
+FETCH_TWIST_MUX: 1
+
+# micro-ROS agent do ros2_ws. Porty čte bringup z profilu.
+FETCH_MICROROS: 1
+
+# 1 = apt ros-<distro>-ros-gz a balíček rmodus_gazebo.
+SIM: 0
+
+ENABLE_RMODUS_NETWORK: 1
+ENABLE_SYSTEMD_RMODUS: 1
+# nginx :80 → :8080
+ENABLE_RMODUS_WEB_PROXY: 1
+# Avahi. Prázdné RMODUS_HOSTNAME = hostname neměnit.
+ENABLE_RMODUS_MDNS: 1
+RMODUS_HOSTNAME: rmodus
+
+INSTALL_RMODUS_ROSDEP_RULES: 1
+RMODUS_ROSDEP_YAML_URL: ""
+INSTALL_RMODUS_HW_PIP: 1
+
+SWAP_ENABLE: 1
+SWAP_SIZE_MB: 4096
+SWAP_PATH: /swapfile

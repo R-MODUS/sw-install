@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Stahne sw-install do ~/rmodus/setup, doinstaluje python3 / git, spusti install.py
+# Stahne sw-install do ~/rmodus/setup a doinstaluje python3 / git.
+# install.py nespousti: driv se upravi install.yaml.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -55,4 +56,7 @@ if [[ ! -f "${INSTALL_PY}" ]]; then
   exit 1
 fi
 chmod +x "${INSTALL_PY}" 2>/dev/null || true
-exec python3 -u "${INSTALL_PY}" "$@"
+echo ""
+echo "[bootstrap] Setup je v ${REPO_DIR}."
+echo "[bootstrap] 1) Uprav ${REPO_DIR}/install.yaml"
+echo "[bootstrap] 2) cd ${REPO_DIR} && python3 -u install.py"
