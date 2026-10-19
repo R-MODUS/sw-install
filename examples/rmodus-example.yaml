@@ -302,6 +302,8 @@ microros:
 
     flow_sensor:
       enabled: true
+      hardware: true
+      motion_topic: /robot/flow/motion
       type: 'twist'
       topic: '/visual_flow/data'
       frame_id: 'flow_front_link'
@@ -345,6 +347,8 @@ microros:
 
     cliff_sensors:
       enabled: true
+      hardware: true
+      state_topic: /robot/cliffs/range
       address: '0x48'
       estop_request:
         enabled: true

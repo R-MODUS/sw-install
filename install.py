@@ -447,7 +447,19 @@ def _as_bool(s: str) -> bool:
 def _sparse_clone_flat_multi(url: str, branch: str, target_dir: Path, dirs: list[str]) -> None:
     print(f"    [git sparse] {' '.join(dirs)} -> {target_dir.name}")
     if (target_dir / ".git").is_dir():
-        print(f"         (slozka uz existuje - preskoceno; pro cisty stav smazte {target_dir})")
+        print(f"         (slozka uz existuje - fetch {branch} + sparse-checkout)")
+        _run(
+            ["git", "-C", str(target_dir), "fetch", "--depth", "1", "origin", branch],
+            check=True,
+        )
+        _run(
+            ["git", "-C", str(target_dir), "reset", "--hard", "FETCH_HEAD"],
+            check=True,
+        )
+        _run(
+            ["git", "-C", str(target_dir), "sparse-checkout", "set", *dirs],
+            check=True,
+        )
         return
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     if target_dir.exists():

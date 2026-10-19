@@ -121,3 +121,15 @@ python3 -u install.py
 ```
 
 Předvolba po aktualizaci: `python3 -u install.py robot` (nebo `web` / `sim` / `full`).
+
+## WSL (okno Gazebo `[WARN:COPY MODE]`)
+
+Prázdné šedé okno s titulkem `[WARN:COPY MODE]` je stav WSLg, ne R-MODUS. Nový terminál virtuálku nerestartuje, grafika žije po celou dobu jejího běhu.
+
+Vynucený restart je v PowerShellu na Windows:
+
+```powershell
+wsl --shutdown
+```
+
+Tím WSL skončí a paměť pustí. Pak Ubuntu otevři znovu a simulaci spusť ještě jednou. `wsl --terminate` nepoužívej, virtuálku rozbije stejným způsobem.
